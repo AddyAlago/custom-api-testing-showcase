@@ -85,50 +85,45 @@ jobs:
         if: always()
         run: |
           echo "k6 smoke completed" > k6-summary.txt
-        # Optional: upload as artifact named perf-k6
-        # uses: actions/upload-artifact@v4
-        # with:
-        #   name: perf-k6
-        #   path: k6-summary.txt
 
   security:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Build & run mock API
         run: |
           docker build -t mock-api ./apps/mock_api
           docker run -d --rm -p 8000:8000 --name mock-api mock-api \
             uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
-          # Wait until health endpoint returns 200
           for i in {1..60}; do
             code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
             if [ "$code" = "200" ]; then echo "API is up"; break; fi; sleep 1; done
           test "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health)" = "200"
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Pull ZAP image with retries and fallback
         id: pullzap
         shell: bash
         run: |
           set -e
-          imgs=("owasp/zap2docker-stable" "ghcr.io/zaproxy/zaproxy:stable")
+          imgs=("ghcr.io/zaproxy/zaproxy:stable" "zaproxy/zap-stable")
           for img in "${imgs[@]}"; do
             echo "Trying to pull $img ..."
-            for i in {1..3}; do
+            for i in {1..5}; do
               if docker pull "$img" -q; then
                 echo "ZAP_IMG=$img" >> $GITHUB_ENV
                 echo "Pulled $img"
                 break 2
               fi
-              echo "Pull failed, retry $i/3..."
+              echo "Pull failed, retry $i/5..."
               sleep 5
             done
           done
           test -n "$ZAP_IMG" || (echo "Failed to pull any ZAP image" && exit 1)
 
       - name: Run ZAP Baseline (non-blocking)
-        # make the pipeline resilient; we can gate later on severity
         continue-on-error: true
         run: |
           mkdir -p zap
@@ -143,4 +138,3 @@ jobs:
         with:
           name: sec-zap
           path: zap
-
