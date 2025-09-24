@@ -1,4 +1,4 @@
-name: API Tests
+name: API Tests (API + Allure Artifacts)
 
 on:
   push:
@@ -32,7 +32,11 @@ jobs:
           docker run -d --rm -p 8000:8000 --name mock-api \
             -e REQUIRED_BEARER=secret-token \
             mock-api uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
-          sleep 3
+          # Wait until health endpoint returns 200
+          for i in {1..30}; do
+            status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
+            if [ "$status" = "200" ]; then echo "API is up"; break; fi; sleep 1; done
+          test "$(curl -s -o /dev/null -w "%{http_code}}" http://localhost:8000/health)" = "200"
 
       - name: Install deps
         run: |
