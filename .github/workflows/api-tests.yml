@@ -13,19 +13,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [smoke, regression, contract]
+        suite: [smoke, regression, contract, negative]
     env:
       BASE_URL: http://localhost:8000
       API_TOKEN: secret-token
-
-    services:
-      api:
-        image: ghcr.io/actions/hello-world:latest # placeholder to warm docker
-        options: >-
-          --health-cmd "echo ok"
-          --health-interval 5s
-          --health-timeout 2s
-          --health-retries 5
 
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +29,9 @@ jobs:
       - name: Build mock API
         run: |
           docker build -t mock-api ./apps/mock_api
-          docker run -d --rm -p 8000:8000 --name mock-api                 -e REQUIRED_BEARER=secret-token                 mock-api uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
+          docker run -d --rm -p 8000:8000 --name mock-api \
+            -e REQUIRED_BEARER=secret-token \
+            mock-api uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
           sleep 3
 
       - name: Install deps
@@ -46,14 +39,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run tests (${{ matrix.suite }})
+      - name: Run tests (${{ matrix.suite }}) with Allure output
         run: |
-          pytest -m ${{ matrix.suite }} --alluredir=allure-results/${{ matrix.suite }}
+          mkdir -p allure-results/${{ matrix.suite }}
+          if [ "${{ matrix.suite }}" = "negative" ]; then
+            pytest tests/negative --alluredir=allure-results/${{ matrix.suite }}
+          else
+            pytest -m ${{ matrix.suite }} --alluredir=allure-results/${{ matrix.suite }}
+          fi
+          # Add environment metadata for the merged report
+          echo "SUITE=API" >> allure-results/${{ matrix.suite }}/environment.properties
+          echo "SUBSUITE=${{ matrix.suite }}" >> allure-results/${{ matrix.suite }}/environment.properties
+          echo "BASE_URL=${BASE_URL}" >> allure-results/${{ matrix.suite }}/environment.properties
 
-      - name: Upload Allure results
+      - name: Upload Allure results (per suite)
         uses: actions/upload-artifact@v4
         with:
-          name: allure-${{ matrix.suite }}
+          name: allure-api-${{ matrix.suite }}
           path: allure-results/${{ matrix.suite }}
 
   performance:
@@ -65,12 +67,22 @@ jobs:
       - name: Build & run mock API
         run: |
           docker build -t mock-api ./apps/mock_api
-          docker run -d --rm -p 8000:8000 --name mock-api mock-api                 uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
+          docker run -d --rm -p 8000:8000 --name mock-api mock-api \
+            uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
           sleep 3
       - name: Set up k6
         uses: grafana/setup-k6-action@v1
       - name: k6 smoke
         run: k6 run performance/smoke.js --env BASE_URL=http://localhost:8000
+      - name: Upload k6 summary
+        if: always()
+        run: |
+          echo "k6 smoke completed" > k6-summary.txt
+        # Optional: upload as artifact named perf-k6
+        # uses: actions/upload-artifact@v4
+        # with:
+        #   name: perf-k6
+        #   path: k6-summary.txt
 
   security:
     runs-on: ubuntu-latest
@@ -79,10 +91,20 @@ jobs:
       - name: Build & run mock API
         run: |
           docker build -t mock-api ./apps/mock_api
-          docker run -d --rm -p 8000:8000 --name mock-api mock-api                 uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
+          docker run -d --rm -p 8000:8000 --name mock-api mock-api \
+            uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
           sleep 3
       - name: ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.12.0
         with:
           target: 'http://localhost:8000/docs'
           cmd_options: '-a'
+      - name: Upload ZAP logs
+        if: always()
+        run: |
+          echo "ZAP baseline finished" > zap-summary.txt
+        # Optional: upload as artifact named sec-zap
+        # uses: actions/upload-artifact@v4
+        # with:
+        #   name: sec-zap
+        #   path: zap-summary.txt

@@ -18,10 +18,11 @@ class TestUsersCrud:
         assert got.status_code == 200
         assert got.json()["email"] == payload["email"]
 
-        # Update
-        upd = client.put(f"/users/{user_id}", json={"name": "Ada Lovelace"})
+        # update
+        upd = client.put(f"/users/{user_id}", json={"name": "Ada Lovelace", "email": payload["email"]})
         assert upd.status_code == 200
         assert upd.json()["name"] == "Ada Lovelace"
+
 
         # Delete
         deleted = client.delete(f"/users/{user_id}")

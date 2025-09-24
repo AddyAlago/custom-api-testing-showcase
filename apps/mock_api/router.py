@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, HTTPException, status, Header
 from typing import Dict, Optional
 from .models import User, UserCreate, Order, OrderCreate
@@ -9,7 +10,7 @@ ORDERS: Dict[int, Order] = {}
 _user_id = 0
 _order_id = 0
 
-REQUIRED_BEARER = "secret-token"
+REQUIRED_BEARER = os.getenv("REQUIRED_BEARER", "secret-token")
 
 def _auth(auth: Optional[str]):
     if auth is None or not auth.startswith("Bearer "):
@@ -24,10 +25,10 @@ def health():
 
 @router.post("/users", status_code=201, response_model=User)
 def create_user(body: UserCreate, authorization: Optional[str] = Header(default=None)):
-    nonlocal_vars = router.__dict__.setdefault("_state", {"user_id": 0})
+    global _user_id
     _auth(authorization)
-    nonlocal_vars["user_id"] += 1
-    u = User(id=nonlocal_vars["user_id"], **body.model_dump())
+    _user_id += 1
+    u = User(id=_user_id, **body.model_dump())
     USERS[u.id] = u
     return u
 
@@ -56,13 +57,13 @@ def delete_user(user_id: int, authorization: Optional[str] = Header(default=None
 
 @router.post("/orders", status_code=201, response_model=Order)
 def create_order(body: OrderCreate, authorization: Optional[str] = Header(default=None)):
-    nonlocal_vars = router.__dict__.setdefault("_state", {"order_id": 0, "user_id": 0})
+    global _order_id
     _auth(authorization)
     if body.user_id not in USERS:
         raise HTTPException(status_code=400, detail="user missing")
-    nonlocal_vars["order_id"] += 1
+    _order_id += 1
     total = sum(i.qty * 9.99 for i in body.items)
-    order = Order(id=nonlocal_vars["order_id"], total=total, **body.model_dump())
+    order = Order(id=_order_id, total=total, **body.model_dump())
     ORDERS[order.id] = order
     return order
 
