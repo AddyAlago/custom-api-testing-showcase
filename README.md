@@ -2,10 +2,10 @@
 
 ### 🧪 API Test Suites
 
-[![Smoke Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=smoke&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
-[![Regression Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=regression&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
-[![Contract Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=contract&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
-[![Negative Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=negative&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
+[![Smoke Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=smoke&logo=pytest)](https://github.com/AddyAlago/custom-api-testing-showcase/actions/workflows/api-tests.yml)
+[![Regression Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=regression&logo=pytest)](https://github.com/AddyAlago/custom-api-testing-showcase/actions/workflows/api-tests.yml)
+[![Contract Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=contract&logo=pytest)](https://github.com/AddyAlago/custom-api-testing-showcase/actions/workflows/api-tests.yml)
+[![Negative Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=negative&logo=pytest)](https://github.com/AddyAlago/custom-api-testing-showcase/actions/workflows/api-tests.yml)
 
 ### 📈 Performance
 
