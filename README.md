@@ -2,19 +2,18 @@
 
 ### 🧪 API Test Suites
 
-[![Smoke](https://github.com/<USER>/<REPO>/actions/workflows/smoke.yml/badge.svg?branch=main)](https://github.com/<USER>/<REPO>/actions/workflows/smoke.yml)
-[![Regression](https://github.com/<USER>/<REPO>/actions/workflows/regression.yml/badge.svg?branch=main)](https://github.com/<USER>/<REPO>/actions/workflows/regression.yml)
-[![Contract](https://github.com/<USER>/<REPO>/actions/workflows/contract.yml/badge.svg?branch=main)](https://github.com/<USER>/<REPO>/actions/workflows/contract.yml)
-[![Negative](https://github.com/<USER>/<REPO>/actions/workflows/negative.yml/badge.svg?branch=main)](https://github.com/<USER>/<REPO>/actions/workflows/negative.yml)
-
+[![Smoke Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=smoke&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
+[![Regression Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=regression&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
+[![Contract Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=contract&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
+[![Negative Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=negative&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
 
 ### 📈 Performance
 
-[![Performance](https://github.com/<USER>/<REPO>/actions/workflows/performance.yml/badge.svg?branch=main)](https://github.com/<USER>/<REPO>/actions/workflows/performance.yml)
+[![Performance Tests](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=performance&logo=k6)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
 
 ### 🔐 Security
 
-[![Security](https://github.com/<USER>/<REPO>/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/<USER>/<REPO>/actions/workflows/security.yml)
+[![Security Scan](https://img.shields.io/github/actions/workflow/status/AddyAlago/custom-api-testing-showcase/api-tests.yml?label=security&logo=github)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
 
 ## Quick start
 
