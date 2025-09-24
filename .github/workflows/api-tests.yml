@@ -7,6 +7,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -131,11 +134,17 @@ jobs:
       - name: Run ZAP Baseline (non-blocking)
         continue-on-error: true
         run: |
+          set -e
           mkdir -p zap
           echo "Using ZAP image: $ZAP_IMG"
+          # Run ZAP baseline against the local docs (OpenAPI UI)
           docker run --rm --network host -v "$PWD/zap:/zap/wrk" "$ZAP_IMG" \
             zap-baseline.py -t http://localhost:8000/docs \
             -J report_json.json -w report_md.md -r report_html.html -a || true
+          # Ensure artifacts exist even if ZAP didn't generate them (e.g., flaky pull/network)
+          [ -f zap/report_html.html ] || echo "ZAP did not generate HTML report. Target may have been unreachable or scan aborted." > zap/README.txt
+          [ -f zap/report_json.json ] || touch zap/report_json.json
+          [ -f zap/report_md.md ]    || touch zap/report_md.md
           ls -la zap || true
 
       - name: Upload ZAP artifacts
@@ -144,3 +153,40 @@ jobs:
         with:
           name: sec-zap
           path: zap
+
+      - name: Add ZAP findings to job summary
+        if: always()
+        run: |
+          echo "## 🔐 ZAP Baseline Findings" >> $GITHUB_STEP_SUMMARY
+          if [ -s zap/report_md.md ]; then
+            cat zap/report_md.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "_No ZAP report found (scan skipped or target unreachable)._" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Prepare site folder
+        if: always()
+        run: |
+          mkdir -p site/zap
+          if [ -f zap/report_html.html ]; then
+            cp zap/report_html.html site/zap/index.html
+          else
+            echo "<h1>ZAP</h1><p>No report in this run.</p>" > site/zap/index.html
+          fi
+
+      - name: Deploy ZAP report to GitHub Pages
+        if: always()
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          keep_files: true
+
+  add-readme-snippet:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add README snippet suggestion
+        run: |
+          echo '### Security' >> $GITHUB_STEP_SUMMARY
+          echo '[![Security Scan](https://img.shields.io/github/actions/workflow/status/${{ github.repository }}/api-tests.yml?label=security&logo=github)](https://github.com/${{ github.repository }}/actions/workflows/api-tests.yml)' >> $GITHUB_STEP_SUMMARY
+          echo '_The **Security** job runs an OWASP ZAP Baseline scan on every push/PR. See the job summary for current findings, download the artifact, or view the latest [ZAP report](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/zap/)._ ' >> $GITHUB_STEP_SUMMARY

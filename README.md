@@ -1,9 +1,19 @@
 # API Testing Showcase
 
-Production-style API testing: functional, contract, performance, and security checks with CI and reports.
+### 🧪 API Test Suites
 
-![CI](https://img.shields.io/github/actions/workflow/status/OWNER/REPO/api-tests.yml?label=CI)
-![Allure](https://img.shields.io/badge/report-Allure-blue)
+[![Smoke Tests](https://img.shields.io/github/actions/workflow/status/<YOUR_GH_USER>/<REPO>/api-tests.yml?label=smoke&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
+[![Regression Tests](https://img.shields.io/github/actions/workflow/status/<YOUR_GH_USER>/<REPO>/api-tests.yml?label=regression&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
+[![Contract Tests](https://img.shields.io/github/actions/workflow/status/<YOUR_GH_USER>/<REPO>/api-tests.yml?label=contract&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
+[![Negative Tests](https://img.shields.io/github/actions/workflow/status/<YOUR_GH_USER>/<REPO>/api-tests.yml?label=negative&logo=pytest)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
+
+### 📈 Performance
+
+[![Performance Tests](https://img.shields.io/github/actions/workflow/status/<YOUR_GH_USER>/<REPO>/api-tests.yml?label=performance&logo=k6)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
+
+### 🔐 Security
+
+[![Security Scan](https://img.shields.io/github/actions/workflow/status/<YOUR_GH_USER>/<REPO>/api-tests.yml?label=security&logo=github)](https://github.com/<YOUR_GH_USER>/<REPO>/actions/workflows/api-tests.yml)
 
 ## Quick start
 
