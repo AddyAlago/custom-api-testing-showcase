@@ -108,25 +108,31 @@ jobs:
         shell: bash
         run: |
           set -e
+          ZAP_IMG=""
           imgs=("ghcr.io/zaproxy/zaproxy:stable" "zaproxy/zap-stable")
           for img in "${imgs[@]}"; do
             echo "Trying to pull $img ..."
             for i in {1..5}; do
               if docker pull "$img" -q; then
-                echo "ZAP_IMG=$img" >> $GITHUB_ENV
                 echo "Pulled $img"
+                ZAP_IMG="$img"                     # set for THIS step
+                echo "ZAP_IMG=$img" >> $GITHUB_ENV  # set for NEXT steps
                 break 2
               fi
               echo "Pull failed, retry $i/5..."
               sleep 5
             done
           done
-          test -n "$ZAP_IMG" || (echo "Failed to pull any ZAP image" && exit 1)
+          if [ -z "$ZAP_IMG" ]; then
+            echo "Failed to pull any ZAP image";
+            exit 1;
+          fi
 
       - name: Run ZAP Baseline (non-blocking)
         continue-on-error: true
         run: |
           mkdir -p zap
+          echo "Using ZAP image: $ZAP_IMG"
           docker run --rm --network host -v "$PWD/zap:/zap/wrk" "$ZAP_IMG" \
             zap-baseline.py -t http://localhost:8000/docs \
             -J report_json.json -w report_md.md -r report_html.html -a || true
