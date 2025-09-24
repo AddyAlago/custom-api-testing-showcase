@@ -1,0 +1,15 @@
+[project]
+name = "api-testing-showcase"
+version = "0.1.0"
+description = "Portfolio repo for advanced API testing"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-q"
+xfail_strict = true
+markers = [
+  "smoke: fast health checks",
+  "regression: full CRUD and flows",
+  "contract: schema validation",
+]

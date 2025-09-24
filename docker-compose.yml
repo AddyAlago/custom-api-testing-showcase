@@ -1,0 +1,11 @@
+version: "3.9"
+services:
+  api:
+    build: ./apps/mock_api
+    image: api-testing-showcase:mock
+    container_name: mock-api
+    environment:
+      - REQUIRED_BEARER=secret-token
+    ports:
+      - "8000:8000"
+    command: uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
