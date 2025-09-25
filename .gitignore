@@ -1,0 +1,10 @@
+# Allure test reports
+allure-results/
+allure-report/
+
+# pytest cache
+.pytest_cache/
+
+# coverage reports
+htmlcov/
+.coverage
