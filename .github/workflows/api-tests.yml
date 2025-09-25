@@ -125,6 +125,13 @@ jobs:
             echo "BASE_URL=${BASE_URL}"
           } >> "allure-results/${{ matrix.suite }}/environment.properties"
 
+      - name: Stage artifact with allure-results wrapper
+        run: |
+          rm -rf artifact-root
+          mkdir -p artifact-root/allure-results
+          # flatten the suite's results into a single allure-results dir
+          cp -R "allure-results/${{ matrix.suite }}/." "artifact-root/allure-results/"
+
       - name: Upload Allure results (per suite)
         if: always()
         uses: actions/upload-artifact@v4
@@ -206,14 +213,15 @@ jobs:
 
       - name: Prepare consolidated allure-results dir
         run: |
-          rm -rf allure-results
-          mv tmp/merged-results allure-results
+          rm -rf artifact-root
+          mkdir -p artifact-root/allure-results
+          cp -R tmp/merged-results/. artifact-root/allure-results/
 
       - name: Upload ONE consolidated artifact
         uses: actions/upload-artifact@v4
         with:
           name: allure-api-merged
-          path: allure-results
+          path: artifact-root
           if-no-files-found: error
           retention-days: 7
           compression-level: 6
