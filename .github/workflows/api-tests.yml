@@ -20,7 +20,6 @@ jobs:
     env:
       BASE_URL: http://localhost:8000
       API_TOKEN: secret-token
-
     steps:
       - uses: actions/checkout@v4
 
@@ -29,16 +28,45 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Build mock API
+      - name: Login to Docker Hub (optional)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        if: ${{ env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Build & run mock API (with base-image fallbacks)
+        shell: bash
         run: |
-          docker build -t mock-api ./apps/mock_api
+          set -e
+          bases=(
+            docker.io/library/python:3.11-slim
+            public.ecr.aws/docker/library/python:3.11-slim
+            mirror.gcr.io/library/python:3.11-slim
+            ghcr.io/library/python:3.11-slim
+          )
+          BUILT=""
+          for b in "${bases[@]}"; do
+            echo "Trying base image: $b"
+            if docker build --build-arg BASE_IMAGE="$b" -t mock-api ./apps/mock_api; then
+              echo "Using base: $b"; BUILT="$b"; break
+            fi
+            echo "Build failed with $b — trying next mirror..."
+          done
+          test -n "$BUILT" || (echo "All base image mirrors failed" && exit 1)
+
+          docker rm -f mock-api 2>/dev/null || true
           docker run -d --rm -p 8000:8000 --name mock-api \
             -e REQUIRED_BEARER=secret-token \
             mock-api uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
-          # Wait until health endpoint returns 200
-          for i in {1..30}; do
-            status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
-            if [ "$status" = "200" ]; then echo "API is up"; break; fi; sleep 1; done
+
+          for i in {1..45}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
+            if [ "$code" = "200" ]; then echo "API is up"; break; fi; sleep 1; done
           test "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health)" = "200"
 
       - name: Install deps
@@ -54,7 +82,6 @@ jobs:
           else
             pytest -m ${{ matrix.suite }} --alluredir=allure-results/${{ matrix.suite }}
           fi
-          # Add environment metadata for the merged report
           echo "SUITE=API" >> allure-results/${{ matrix.suite }}/environment.properties
           echo "SUBSUITE=${{ matrix.suite }}" >> allure-results/${{ matrix.suite }}/environment.properties
           echo "BASE_URL=${BASE_URL}" >> allure-results/${{ matrix.suite }}/environment.properties
@@ -71,19 +98,53 @@ jobs:
       BASE_URL: http://localhost:8000
     steps:
       - uses: actions/checkout@v4
-      - name: Build & run mock API
+
+      - name: Login to Docker Hub (optional)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        if: ${{ env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Build & run mock API (with base-image fallbacks)
+        shell: bash
         run: |
-          docker build -t mock-api ./apps/mock_api
-          docker run -d --rm -p 8000:8000 --name mock-api mock-api \
-            uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
-          for i in {1..30}; do
-            status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
-            if [ "$status" = "200" ]; then echo "API is up"; break; fi; sleep 1; done
+          set -e
+          bases=(
+            docker.io/library/python:3.11-slim
+            public.ecr.aws/docker/library/python:3.11-slim
+            mirror.gcr.io/library/python:3.11-slim
+            ghcr.io/library/python:3.11-slim
+          )
+          BUILT=""
+          for b in "${bases[@]}"; do
+            echo "Trying base image: $b"
+            if docker build --build-arg BASE_IMAGE="$b" -t mock-api ./apps/mock_api; then
+              echo "Using base: $b"; BUILT="$b"; break
+            fi
+            echo "Build failed with $b — trying next mirror..."
+          done
+          test -n "$BUILT" || (echo "All base image mirrors failed" && exit 1)
+
+          docker rm -f mock-api 2>/dev/null || true
+          docker run -d --rm -p 8000:8000 --name mock-api \
+            mock-api uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
+
+          for i in {1..60}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
+            if [ "$code" = "200" ]; then echo "API is up"; break; fi; sleep 1; done
           test "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health)" = "200"
+
       - name: Set up k6
         uses: grafana/setup-k6-action@v1
+
       - name: k6 smoke
-        run: k6 run performance/smoke.js --env BASE_URL=http://localhost:8000
+        run: k6 run performance/smoke.js --env BASE_URL=${{ env.BASE_URL }}
+
       - name: Upload k6 summary
         if: always()
         run: |
@@ -93,43 +154,63 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build & run mock API
+
+      - name: Login to Docker Hub (optional)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        if: ${{ env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Build & run mock API (with base-image fallbacks)
+        shell: bash
         run: |
-          docker build -t mock-api ./apps/mock_api
-          docker run -d --rm -p 8000:8000 --name mock-api mock-api \
-            uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
+          set -e
+          bases=(
+            docker.io/library/python:3.11-slim
+            public.ecr.aws/docker/library/python:3.11-slim
+            mirror.gcr.io/library/python:3.11-slim
+            ghcr.io/library/python:3.11-slim
+          )
+          BUILT=""
+          for b in "${bases[@]}"; do
+            echo "Trying base image: $b"
+            if docker build --build-arg BASE_IMAGE="$b" -t mock-api ./apps/mock_api; then
+              echo "Using base: $b"; BUILT="$b"; break
+            fi
+            echo "Build failed with $b — trying next mirror..."
+          done
+          test -n "$BUILT" || (echo "All base image mirrors failed" && exit 1)
+
+          docker rm -f mock-api 2>/dev/null || true
+          docker run -d --rm -p 8000:8000 --name mock-api \
+            mock-api uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000
+
           for i in {1..60}; do
             code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
             if [ "$code" = "200" ]; then echo "API is up"; break; fi; sleep 1; done
           test "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health)" = "200"
 
-      - name: Login to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Pull ZAP image with retries and fallback
-        id: pullzap
+      - name: Pull ZAP image (retry w/ fallback)
         shell: bash
         run: |
           set -e
-          ZAP_IMG=""
           imgs=("ghcr.io/zaproxy/zaproxy:stable" "zaproxy/zap-stable")
+          pulled=""
           for img in "${imgs[@]}"; do
-            echo "Trying to pull $img ..."
+            echo "Pulling $img ..."
             for i in {1..5}; do
               if docker pull "$img" -q; then
-                echo "Pulled $img"
-                ZAP_IMG="$img"                     # set for THIS step
-                echo "ZAP_IMG=$img" >> $GITHUB_ENV  # set for NEXT steps
-                break 2
-              fi
-              echo "Pull failed, retry $i/5..."
-              sleep 5
+                echo "Pulled $img"; pulled="$img"; break 2; fi
+              echo "Retry $i/5..."; sleep 5
             done
           done
-          if [ -z "$ZAP_IMG" ]; then
-            echo "Failed to pull any ZAP image";
-            exit 1;
-          fi
+          test -n "$pulled" || (echo "Failed to pull ZAP image" && exit 1)
+          echo "ZAP_IMG=$pulled" >> $GITHUB_ENV
 
       - name: Run ZAP Baseline (non-blocking)
         continue-on-error: true
@@ -137,15 +218,12 @@ jobs:
           set -e
           mkdir -p zap
           echo "Using ZAP image: $ZAP_IMG"
-          # Run ZAP baseline against the local docs (OpenAPI UI)
           docker run --rm --network host -v "$PWD/zap:/zap/wrk" "$ZAP_IMG" \
             zap-baseline.py -t http://localhost:8000/docs \
             -J report_json.json -w report_md.md -r report_html.html -a || true
-          # Ensure artifacts exist even if ZAP didn't generate them (e.g., flaky pull/network)
-          [ -f zap/report_html.html ] || echo "ZAP did not generate HTML report. Target may have been unreachable or scan aborted." > zap/README.txt
           [ -f zap/report_json.json ] || touch zap/report_json.json
-          [ -f zap/report_md.md ]    || touch zap/report_md.md
-          ls -la zap || true
+          [ -f zap/report_md.md ] || echo "No ZAP findings (or report missing)." > zap/report_md.md
+          [ -f zap/report_html.html ] || echo "<h1>ZAP</h1><p>No report in this run.</p>" > zap/report_html.html
 
       - name: Upload ZAP artifacts
         if: always()
@@ -163,30 +241,3 @@ jobs:
           else
             echo "_No ZAP report found (scan skipped or target unreachable)._" >> $GITHUB_STEP_SUMMARY
           fi
-
-      - name: Prepare site folder
-        if: always()
-        run: |
-          mkdir -p site/zap
-          if [ -f zap/report_html.html ]; then
-            cp zap/report_html.html site/zap/index.html
-          else
-            echo "<h1>ZAP</h1><p>No report in this run.</p>" > site/zap/index.html
-          fi
-
-      - name: Deploy ZAP report to GitHub Pages
-        if: always()
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./site
-          keep_files: true
-
-  add-readme-snippet:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Add README snippet suggestion
-        run: |
-          echo '### Security' >> $GITHUB_STEP_SUMMARY
-          echo '[![Security Scan](https://img.shields.io/github/actions/workflow/status/${{ github.repository }}/api-tests.yml?label=security&logo=github)](https://github.com/${{ github.repository }}/actions/workflows/api-tests.yml)' >> $GITHUB_STEP_SUMMARY
-          echo '_The **Security** job runs an OWASP ZAP Baseline scan on every push/PR. See the job summary for current findings, download the artifact, or view the latest [ZAP report](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/zap/)._ ' >> $GITHUB_STEP_SUMMARY
