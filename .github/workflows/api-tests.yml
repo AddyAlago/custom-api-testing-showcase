@@ -161,15 +161,22 @@ jobs:
           done
           test "$(curl -s -o /dev/null -w "%{http_code}" $BASE_URL/health)" = "200"
 
-      # Run OWASP ZAP Baseline using the official action (pulls from GHCR)
+      # --- fixes the write permission issue inside the ZAP container ---
+      - name: Pre-create ZAP working files with open perms
+        run: |
+          touch zap.yaml report_json.json report_md.md report_html.html
+          chmod a+w zap.yaml report_json.json report_md.md report_html.html
+
+      # Use a newer action version and a safe artifact name (hyphen instead of underscore)
       - name: ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.12.0
+        uses: zaproxy/action-baseline@v0.14.0
         with:
           target: "${{ env.BASE_URL }}/docs"
           cmd_options: "-a"
           allow_issue_writing: false
+          artifact_name: "sec-zap"     # avoid underscore to fix 400
 
-      - name: Upload ZAP artifacts (if present)
+      - name: Upload ZAP artifacts (fallback)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -179,3 +186,4 @@ jobs:
             report_md.md
             report_json.json
           if-no-files-found: ignore
+
