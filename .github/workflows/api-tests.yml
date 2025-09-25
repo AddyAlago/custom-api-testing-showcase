@@ -7,7 +7,6 @@ on:
     branches: [ "main" ]
   workflow_dispatch: {}
 
-# Only need read perms in this repo
 permissions:
   contents: read
 
@@ -174,17 +173,36 @@ jobs:
           path: tmp/in/negative
         continue-on-error: true
 
+      - name: Inspect downloaded artifacts
+        run: |
+          echo "==== ls -laR tmp/in ===="
+          ls -laR tmp/in || true
+
       - name: Merge Allure result files
         shell: bash
         run: |
           set -e
-          # Copy from the inner 'allure-results' dir of each artifact
-          find tmp/in -type d -name 'allure-results' -print0 | while IFS= read -r -d '' d; do
-            echo "Merging $d"
+          mkdir -p tmp/merged-results
+          found=0
+          # Preferred: explicit 'allure-results' directories in artifacts
+          while IFS= read -r -d '' d; do
+            echo "Merging explicit folder: $d"
             cp -R "$d/." tmp/merged-results/
-          done
+            found=1
+          done < <(find tmp/in -type d -name 'allure-results' -print0 2>/dev/null)
+
+          if [ "$found" -eq 0 ]; then
+            echo "No 'allure-results' directories found; falling back to copying all files under tmp/in/*"
+            find tmp/in -type f -print0 | xargs -0 -I{} cp "{}" tmp/merged-results/ || true
+          fi
+
           echo "Merged files:"
           ls -la tmp/merged-results || true
+          files=$(find tmp/merged-results -type f | wc -l | xargs)
+          if [ "$files" = "0" ]; then
+            echo "::error::No Allure files found to merge. Did the per-suite artifacts upload correctly?"
+            exit 1
+          fi
 
       - name: Prepare consolidated allure-results dir
         run: |
