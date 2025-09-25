@@ -130,8 +130,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: api-allure-results-${{ matrix.suite }}
-          path: allure-results/${{ matrix.suite }}
+          name: allure-api-${{ matrix.suite }}
+          path: allure-results
           if-no-files-found: error
           retention-days: 7
           compression-level: 6
@@ -149,47 +149,53 @@ jobs:
       - name: Download smoke results
         uses: actions/download-artifact@v4
         with:
-          name: api-allure-results-smoke
+          name: allure-api-smoke
           path: tmp/in/smoke
         continue-on-error: true
 
       - name: Download regression results
         uses: actions/download-artifact@v4
         with:
-          name: api-allure-results-regression
+          name: allure-api-regression
           path: tmp/in/regression
         continue-on-error: true
 
       - name: Download contract results
         uses: actions/download-artifact@v4
         with:
-          name: api-allure-results-contract
+          name: allure-api-contract
           path: tmp/in/contract
         continue-on-error: true
 
       - name: Download negative results
         uses: actions/download-artifact@v4
         with:
-          name: api-allure-results-negative
+          name: allure-api-negative
           path: tmp/in/negative
         continue-on-error: true
 
       - name: Merge Allure result files
+        shell: bash
         run: |
-          # copy all files from each suite into one allure-results folder
-          for d in tmp/in/*; do
-            if [ -d "$d" ] && [ -n "$(ls -A "$d" 2>/dev/null)" ]; then
-              cp -R "$d/." tmp/merged-results/
-            fi
+          set -e
+          # Copy from the inner 'allure-results' dir of each artifact
+          find tmp/in -type d -name 'allure-results' -print0 | while IFS= read -r -d '' d; do
+            echo "Merging $d"
+            cp -R "$d/." tmp/merged-results/
           done
           echo "Merged files:"
-          find tmp/merged-results -maxdepth 1 -type f -printf "%f\n" | sort || true
+          ls -la tmp/merged-results || true
+
+      - name: Prepare consolidated allure-results dir
+        run: |
+          rm -rf allure-results
+          mv tmp/merged-results allure-results
 
       - name: Upload ONE consolidated artifact
         uses: actions/upload-artifact@v4
         with:
-          name: api-allure-results
-          path: tmp/merged-results
+          name: allure-api-merged
+          path: allure-results
           if-no-files-found: error
           retention-days: 7
           compression-level: 6
