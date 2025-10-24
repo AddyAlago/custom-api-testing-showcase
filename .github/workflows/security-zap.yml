@@ -41,7 +41,7 @@ jobs:
           mkdir -p zap-report
           docker run --rm --network=host \
             -v "$PWD/zap-report:/zap/wrk" \
-            owasp/zap2docker-stable zap-baseline.py \
+            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
             -t http://localhost:8000 \
             -r zap-report.html \
             -x zap-report.xml \
