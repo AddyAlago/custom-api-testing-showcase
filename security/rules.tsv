@@ -1,0 +1,4 @@
+# ruleId    threshold   action
+10026       WARN        WARN     # X-Content-Type-Options
+10098       WARN        WARN     # Cross-Domain Misconfiguration
+90033       WARN        WARN     # Retrieved from Cache

@@ -1,0 +1,95 @@
+name: Security • ZAP Baseline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  schedule:
+    - cron: "0 9 * * 1"   # Mondays at 09:00 UTC (adjust as you like)
+  workflow_dispatch:
+
+permissions:
+  contents: write    # needed for publishing with gh-pages action
+
+jobs:
+  zap-baseline:
+    name: Run ZAP Baseline & Publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: api-zap-pages
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start mock API (Docker Compose)
+        run: |
+          docker compose up -d
+          echo "Waiting for mock API..."
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              echo "Mock API is up."
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run ZAP Baseline scan
+        run: |
+          mkdir -p zap-report
+          docker run --rm --network=host \
+            -v "$PWD/zap-report:/zap/wrk" \
+            owasp/zap2docker-stable zap-baseline.py \
+            -t http://localhost:8000 \
+            -r zap-report.html \
+            -x zap-report.xml \
+            -m 5 \
+            -a
+          # Make the HTML the site index so your portfolio can link cleanly
+          cp zap-report/zap-report.html site_index.html
+
+      - name: Upload ZAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: |
+            zap-report/**
+            site_index.html
+
+      - name: Publish report to gh-pages (/zap/)
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./zap-report
+          destination_dir: zap
+          force_orphan: false
+
+      - name: Also publish /zap/index.html (stable name)
+        # Some GH Pages themes/listings prefer explicit index naming
+        run: |
+          # Ensure /zap/index.html exists (we published the directory already)
+          # But if the HTML isn't named index.html, add a copy
+          if [ -f "zap-report/zap-report.html" ]; then
+            mkdir -p _zap
+            cp zap-report/zap-report.html _zap/index.html
+          else
+            mkdir -p _zap
+            cp site_index.html _zap/index.html
+          fi
+        shell: bash
+
+      - name: Deploy index helper (ensures /zap/index.html)
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./_zap
+          destination_dir: zap
+          force_orphan: false
+
+      - name: Summary links
+        if: always()
+        run: |
+          echo "### 🔐 ZAP Baseline" >> $GITHUB_STEP_SUMMARY
+          echo "- Report: https://addyalago.github.io/custom-api-testing-showcase/zap/" >> $GITHUB_STEP_SUMMARY
