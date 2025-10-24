@@ -35,7 +35,7 @@ jobs:
       - name: Install test deps
         run: |
           python -m pip install --upgrade pip
-          pip install pytest requests jsonschema allure-pytest
+          pip install pytest requests jsonschema allure-pytest python-dotenv
 
       - name: Start local API
         working-directory: local-api
