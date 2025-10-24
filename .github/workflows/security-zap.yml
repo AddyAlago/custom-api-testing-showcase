@@ -5,7 +5,7 @@ on:
     branches: [ main ]
   pull_request:
   schedule:
-    - cron: "0 9 * * 1"   # Mondays at 09:00 UTC (adjust as you like)
+    - cron: "0 9 * * 1"   # Mondays at 09:00 UTC
   workflow_dispatch:
 
 permissions:
@@ -37,26 +37,32 @@ jobs:
           done
 
       - name: Run ZAP Baseline scan
+        env:
+          ZAP_TARGET: http://localhost:8000/docs   # start from a 200 page (FastAPI docs)
         run: |
+          # Ensure the mounted directory is writable by the container
+          rm -rf zap-report
           mkdir -p zap-report
+          chmod 777 zap-report
+
           docker run --rm --network=host \
+            -u 0:0 \  # run as root to avoid write-permission issues
             -v "$PWD/zap-report:/zap/wrk" \
             ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-            -t http://localhost:8000 \
+            -t "${ZAP_TARGET}" \
             -r zap-report.html \
             -x zap-report.xml \
             -m 5 \
             -a
-          # Make the HTML the site index so your portfolio can link cleanly
-          cp zap-report/zap-report.html site_index.html
+
+          # Provide a stable landing page for GH Pages (/zap/)
+          cp zap-report/zap-report.html zap-report/index.html || true
 
       - name: Upload ZAP artifact
         uses: actions/upload-artifact@v4
         with:
           name: zap-baseline-report
-          path: |
-            zap-report/**
-            site_index.html
+          path: zap-report/**
 
       - name: Publish report to gh-pages (/zap/)
         uses: peaceiris/actions-gh-pages@v3
@@ -67,16 +73,10 @@ jobs:
           force_orphan: false
 
       - name: Also publish /zap/index.html (stable name)
-        # Some GH Pages themes/listings prefer explicit index naming
         run: |
-          # Ensure /zap/index.html exists (we published the directory already)
-          # But if the HTML isn't named index.html, add a copy
-          if [ -f "zap-report/zap-report.html" ]; then
+          if [ -f "zap-report/index.html" ]; then
             mkdir -p _zap
-            cp zap-report/zap-report.html _zap/index.html
-          else
-            mkdir -p _zap
-            cp site_index.html _zap/index.html
+            cp zap-report/index.html _zap/index.html
           fi
         shell: bash
 
