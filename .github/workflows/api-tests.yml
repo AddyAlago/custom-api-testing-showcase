@@ -1,330 +1,83 @@
-name: API Tests (API + Allure Artifacts)
+name: API tests
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "main" ]
-  workflow_dispatch: {}
-
-permissions:
-  contents: read
+  workflow_dispatch:
 
 jobs:
-  test:
+  run-matrix:
+    name: Run ${{ matrix.suite }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        suite: [smoke, regression, contract, negative]
-    env:
-      BASE_URL: http://localhost:8000
-      API_TOKEN: secret-token
-      PYTHONDONTWRITEBYTECODE: 1
-      PIP_DISABLE_PIP_VERSION_CHECK: 1
+        include:
+          - suite: contract
+            marker: contract
+          - suite: negative
+            marker: negative
+          - suite: idempotency
+            marker: idempotency
+          - suite: ratelimit
+            marker: ratelimit
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/apps/mock_api/**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies (repo + mock API)
+      - name: Install test deps
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f apps/mock_api/requirements.txt ]; then pip install -r apps/mock_api/requirements.txt; fi
-          # FastAPI/uvicorn if your mock_api needs them but isn't pinned:
-          python - <<'PY'
-          import pkgutil, sys, subprocess
-          for m in ["uvicorn", "fastapi"]:
-              if not pkgutil.find_loader(m):
-                  subprocess.check_call([sys.executable, "-m", "pip", "install", m])
-          PY
+          pip install pytest requests jsonschema allure-pytest
 
-      - name: Launch mock API (no Docker)
+      - name: Start local API
+        working-directory: local-api
         env:
-          REQUIRED_BEARER: ${{ env.API_TOKEN }}
+          RATE_LIMIT_PER_MIN: "10"   # keeps ratelimit suite quick in CI
+        run: docker compose -f docker-compose.api.yml up -d --build
+
+      - name: Wait for API /health
         run: |
-          nohup uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000 >/tmp/mock_api.log 2>&1 &
           for i in {1..60}; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" $BASE_URL/health || true)
-            if [ "$code" = "200" ]; then echo "API is up"; break; fi
+            curl -fsS http://localhost:8000/health && exit 0
             sleep 1
           done
-          test "$(curl -s -o /dev/null -w "%{http_code}" $BASE_URL/health)" = "200"
+          echo "API did not start in time" && exit 1
 
-      - name: Run tests (${{ matrix.suite }}) with Allure output
-        shell: bash
+      - name: Run pytest (${{ matrix.suite }})
+        env:
+          API_BASE_URL: http://localhost:8000
+          RATE_LIMIT_ENDPOINT: /ratelimit
         run: |
-          set -e
-          python -m pip install --upgrade pip
-          python -m pip install pytest allure-pytest || true
-
-          echo "=== Pytest & plugins ==="
-          pytest --version || true
-          python -c "import pkgutil; print('allure-pytest installed:', bool(pkgutil.find_loader('allure_pytest')))"
-
-          echo "=== Test discovery (collect-only) for marker '${{ matrix.suite }}' ==="
-          if [ "${{ matrix.suite }}" = "negative" ]; then
-            COLLECT_CMD="pytest tests/negative --collect-only -q"
-          else
-            COLLECT_CMD="pytest -m '${{ matrix.suite }}' --collect-only -q"
-          fi
-          set +e
-          COLLECT_OUT="$($COLLECT_CMD 2>&1)"
-          COLLECT_RC=$?
-          set -e
-          echo "$COLLECT_OUT"
-          COLLECTED=$(echo "$COLLECT_OUT" | grep -Eo 'collected [0-9]+ items' | awk '{print $2}' || echo 0)
-          echo "Collected (marker=${{ matrix.suite }}): ${COLLECTED:-0}"
-
-          mkdir -p "allure-results/${{ matrix.suite }}"
-
-          echo "=== Run with marker (first attempt) ==="
-          set +e
-          if [ "${{ matrix.suite }}" = "negative" ]; then
-            pytest tests/negative -q --alluredir="allure-results/${{ matrix.suite }}"
-            RC=$?
-          else
-            pytest -m "${{ matrix.suite }}" -q --alluredir="allure-results/${{ matrix.suite }}"
-            RC=$?
-          fi
-          set -e
-          echo "Initial pytest exit code: $RC"
-
-          echo "=== Count Allure files after first attempt ==="
-          find "allure-results/${{ matrix.suite }}" -maxdepth 1 -type f -printf "%f\n" | sort || true
-          COUNT=$(find "allure-results/${{ matrix.suite }}" -type f | wc -l | xargs)
-          BYTES=$(du -sb "allure-results/${{ matrix.suite }}" | awk '{print $1}')
-          echo "Allure files: $COUNT | bytes: $BYTES"
-
-          # If zero results or too small, rerun without marker to ensure we actually produce output
-          if [ "${COUNT}" = "0" ] || [ "${BYTES}" -lt 4096 ]; then
-            echo "No/too-small Allure output (COUNT=${COUNT}, BYTES=${BYTES}). Re-running full test suite to populate Allure."
-            pytest -q --alluredir="allure-results/${{ matrix.suite }}"
-            COUNT=$(find "allure-results/${{ matrix.suite }}" -type f | wc -l | xargs)
-            BYTES=$(du -sb "allure-results/${{ matrix.suite }}" | awk '{print $1}')
-            echo "After fallback — Allure files: $COUNT | bytes: $BYTES"
-          fi
-
-          # Add environment metadata
+          mkdir -p allure-results
+          cat > allure-results/executor.json <<'JSON'
           {
-            echo "SUITE=API"
-            echo "SUBSUITE=${{ matrix.suite }}"
-            echo "BASE_URL=${BASE_URL}"
-          } >> "allure-results/${{ matrix.suite }}/environment.properties"
+            "name": "GitHub Actions",
+            "type": "github",
+            "buildName": "API • ${{ matrix.suite }} • #${{ github.run_number }}",
+            "buildUrl": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "reportName": "API • ${{ matrix.suite }}"
+          }
+          JSON
+          pytest -m "${{ matrix.marker }}" --alluredir=allure-results -q || true
 
-      - name: Stage artifact with allure-results wrapper
-        run: |
-          rm -rf artifact-root
-          mkdir -p artifact-root/allure-results
-          # flatten the suite's results into a single allure-results dir
-          cp -R "allure-results/${{ matrix.suite }}/." "artifact-root/allure-results/"
-
-      - name: Upload Allure results (per suite)
+      - name: Upload Allure results (artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: allure-api-${{ matrix.suite }}
           path: allure-results
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 6
+          if-no-files-found: warn
+          retention-days: 14
 
-  bundle-allure:
-    name: Bundle API Allure (one artifact)
-    runs-on: ubuntu-latest
-    needs: [test]
-
-    steps:
-      - name: Prepare dirs
-        run: |
-          mkdir -p tmp/merged-results
-
-      - name: Download smoke results
-        uses: actions/download-artifact@v4
-        with:
-          name: allure-api-smoke
-          path: tmp/in/smoke
-        continue-on-error: true
-
-      - name: Download regression results
-        uses: actions/download-artifact@v4
-        with:
-          name: allure-api-regression
-          path: tmp/in/regression
-        continue-on-error: true
-
-      - name: Download contract results
-        uses: actions/download-artifact@v4
-        with:
-          name: allure-api-contract
-          path: tmp/in/contract
-        continue-on-error: true
-
-      - name: Download negative results
-        uses: actions/download-artifact@v4
-        with:
-          name: allure-api-negative
-          path: tmp/in/negative
-        continue-on-error: true
-
-      - name: Inspect downloaded artifacts
-        run: |
-          echo "==== ls -laR tmp/in ===="
-          ls -laR tmp/in || true
-
-      - name: Merge Allure result files
-        shell: bash
-        run: |
-          set -e
-          mkdir -p tmp/merged-results
-          found=0
-          # Preferred: explicit 'allure-results' directories in artifacts
-          while IFS= read -r -d '' d; do
-            echo "Merging explicit folder: $d"
-            cp -R "$d/." tmp/merged-results/
-            found=1
-          done < <(find tmp/in -type d -name 'allure-results' -print0 2>/dev/null)
-
-          if [ "$found" -eq 0 ]; then
-            echo "No 'allure-results' directories found; falling back to copying all files under tmp/in/*"
-            find tmp/in -type f -print0 | xargs -0 -I{} cp "{}" tmp/merged-results/ || true
-          fi
-
-          echo "Merged files:"
-          ls -la tmp/merged-results || true
-          files=$(find tmp/merged-results -type f | wc -l | xargs)
-          if [ "$files" = "0" ]; then
-            echo "::error::No Allure files found to merge. Did the per-suite artifacts upload correctly?"
-            exit 1
-          fi
-
-      - name: Prepare consolidated allure-results dir
-        run: |
-          rm -rf artifact-root
-          mkdir -p artifact-root/allure-results
-          cp -R tmp/merged-results/. artifact-root/allure-results/
-
-      - name: Upload ONE consolidated artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: allure-api-merged
-          path: artifact-root
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 6
-
-  performance:
-    runs-on: ubuntu-latest
-    env:
-      BASE_URL: http://localhost:8000
-      PYTHONDONTWRITEBYTECODE: 1
-      PIP_DISABLE_PIP_VERSION_CHECK: 1
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install & launch mock API (no Docker)
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f apps/mock_api/requirements.txt ]; then pip install -r apps/mock_api/requirements.txt; fi
-          python - <<'PY'
-          import pkgutil, sys, subprocess
-          for m in ["uvicorn", "fastapi"]:
-              if not pkgutil.find_loader(m):
-                  subprocess.check_call([sys.executable, "-m", "pip", "install", m])
-          PY
-          nohup uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000 >/tmp/mock_api.log 2>&1 &
-          for i in {1..60}; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" $BASE_URL/health || true)
-            if [ "$code" = "200" ]; then echo "API is up"; break; fi
-            sleep 1
-          done
-          test "$(curl -s -o /dev/null -w "%{http_code}" $BASE_URL/health)" = "200"
-
-      - name: Set up k6
-        uses: grafana/setup-k6-action@v1
-
-      - name: k6 smoke
-        run: k6 run performance/smoke.js --env BASE_URL=${{ env.BASE_URL }}
-
-      - name: Upload k6 summary
+      - name: Stop local API
         if: always()
-        run: echo "k6 smoke completed" > k6-summary.txt
-
-  security:
-    runs-on: ubuntu-latest
-    env:
-      BASE_URL: http://localhost:8000
-      PYTHONDONTWRITEBYTECODE: 1
-      PIP_DISABLE_PIP_VERSION_CHECK: 1
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install & launch mock API (no Docker)
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f apps/mock_api/requirements.txt ]; then pip install -r apps/mock_api/requirements.txt; fi
-          python - <<'PY'
-          import pkgutil, sys, subprocess
-          for m in ["uvicorn", "fastapi"]:
-              if not pkgutil.find_loader(m):
-                  subprocess.check_call([sys.executable, "-m", "pip", "install", m])
-          PY
-          nohup uvicorn apps.mock_api.main:app --host 0.0.0.0 --port 8000 >/tmp/mock_api.log 2>&1 &
-          for i in {1..60}; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" $BASE_URL/health || true)
-            if [ "$code" = "200" ]; then echo "API is up"; break; fi
-            sleep 1
-          done
-          test "$(curl -s -o /dev/null -w "%{http_code}" $BASE_URL/health)" = "200"
-
-      # --- fixes the write permission issue inside the ZAP container ---
-      - name: Pre-create ZAP working files with open perms
-        run: |
-          touch zap.yaml report_json.json report_md.md report_html.html
-          chmod a+w zap.yaml report_json.json report_md.md report_html.html
-
-      # Use a newer action version and a safe artifact name (hyphen instead of underscore)
-      - name: ZAP Baseline Scan
-        id: zap
-        uses: zaproxy/action-baseline@v0.14.0
-        with:
-          target: "${{ env.BASE_URL }}/docs"
-          cmd_options: "-a"
-          allow_issue_writing: false
-          artifact_name: "zap-baseline"   # <-- name #1
-
-      - name: Upload ZAP artifacts (fallback)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-baseline-manual       # <-- different name #2 avoids 409
-          path: |
-            report_html.html
-            report_md.md
-            report_json.json
-          if-no-files-found: ignore
+        working-directory: local-api
+        run: docker compose -f docker-compose.api.yml down

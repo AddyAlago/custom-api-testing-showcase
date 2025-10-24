@@ -1,0 +1,11 @@
+services:
+  api:
+    build: .
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      # - REQUIRE_AUTH=1
+      - RATE_LIMIT_PER_MIN=5 
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

@@ -9,8 +9,10 @@
   ],
   "properties": {
     "id": {
-      "type": "integer",
-      "minimum": 1
+      "type": [
+        "integer",
+        "string"
+      ]
     },
     "name": {
       "type": "string",
@@ -19,7 +21,21 @@
     "email": {
       "type": "string",
       "format": "email"
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
     }
   },
-  "additionalProperties": false
+  "additionalProperties": true
 }

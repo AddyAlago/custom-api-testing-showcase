@@ -19,7 +19,7 @@ def session() -> requests.Session:
     s.headers.update({"Content-Type": "application/json"})
     return s
 
-# --- Allure labeling so this suite merges nicely with your portfolio report ---
+
 try:
     import allure  # type: ignore
 except Exception:  # pragma: no cover
@@ -44,7 +44,7 @@ def pytest_collection_modifyitems(items):
         return
     for item in items:
         # Top-level group in your existing portfolio report
-        item.add_marker(allure.label("parentSuite", "Portfolio"))
+        item.add_marker(allure.label("parentSuite", "API"))
         # This project label helps when merging cross-repo
         item.add_marker(allure.label("epic", "API Testing Showcase"))
         # Show a dedicated suite for API
