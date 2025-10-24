@@ -57,6 +57,7 @@ jobs:
           RATE_LIMIT_ENDPOINT: /ratelimit
         run: |
           mkdir -p allure-results
+          # Tag report with CI metadata (helps later debugging)
           cat > allure-results/executor.json <<'JSON'
           {
             "name": "GitHub Actions",
@@ -66,7 +67,18 @@ jobs:
             "reportName": "API • ${{ matrix.suite }}"
           }
           JSON
+          # Run only this suite's marker; don't fail hard so artifact still uploads
           pytest -m "${{ matrix.marker }}" --alluredir=allure-results -q || true
+
+      - name: Inspect Allure payload (API)
+        if: always()
+        run: |
+          echo "==== ls -la allure-results ===="
+          ls -la allure-results || true
+          echo "==== count of files ===="
+          find allure-results -type f \( -name '*.json' -o -name '*.xml' -o -name '*.txt' \) | wc -l
+          echo "==== sample files ===="
+          find allure-results -maxdepth 1 -type f -printf '%P\n' | head -n 50 || true
 
       - name: Upload Allure results (artifact)
         if: always()
@@ -76,6 +88,7 @@ jobs:
           path: allure-results
           if-no-files-found: warn
           retention-days: 14
+
 
       - name: Stop local API
         if: always()
