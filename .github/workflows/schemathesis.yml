@@ -1,0 +1,75 @@
+name: QA • Schemathesis
+
+on:
+  push: { branches: [ main ] }
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  schemathesis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock API
+        run: |
+          docker compose up -d
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/openapi.json >/dev/null 2>&1; then
+              echo "API up"; break
+            fi
+            sleep 2
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install schemathesis
+        run: |
+          python -m pip install -U pip
+          python -m pip install 'schemathesis[hypothesis]==3.29.5'
+
+      - name: Run Schemathesis (non-gating)
+        env:
+          BASE_URL: http://localhost:8000
+        run: |
+          mkdir -p schemathesis-report
+          set +e
+          schemathesis run "$BASE_URL/openapi.json" \
+            --checks=all \
+            --base-url "$BASE_URL" \
+            --hypothesis-deadline=none \
+            --show-errors-tracebacks \
+            --junit-xml schemathesis-report/junit.xml
+          SCH_EC=$?
+          set -e
+          echo "Schemathesis exit code: $SCH_EC (ignored for demo showcase)"
+
+          # Tiny HTML index so we can publish a simple page
+          cat > schemathesis-report/index.html <<'HTML'
+          <!doctype html><meta charset="utf-8">
+          <title>Schemathesis Results</title>
+          <h1>Schemathesis Results</h1>
+          <p>JUnit XML: <a href="./junit.xml">junit.xml</a></p>
+          <p>This job is non-gating for the showcase.</p>
+          HTML
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: schemathesis-report
+          path: schemathesis-report/**
+
+      - name: Publish to gh-pages (/schemathesis/)
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: schemathesis-report
+          destination_dir: schemathesis
+          force_orphan: false

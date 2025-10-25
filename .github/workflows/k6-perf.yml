@@ -1,0 +1,77 @@
+name: Perf • k6 Smoke
+
+on:
+  push: { branches: [ main ] }
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start mock API
+        run: |
+          docker compose up -d
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Install k6
+        run: |
+          curl -sSL https://github.com/grafana/k6/releases/latest/download/k6-v0.51.0-linux-amd64.tar.gz -o k6.tgz
+          tar -xzf k6.tgz
+          sudo mv k6-v0.51.0-linux-amd64/k6 /usr/local/bin/k6
+          k6 version
+
+      - name: Run k6 (non-gating) + export summary
+        env:
+          BASE_URL: http://localhost:8000
+          K6_SUMMARY_TREND_STATS: "avg,p(90),p(95),p(99),min,max"
+        run: |
+          mkdir -p k6-report
+          set +e
+          k6 run performance/k6/smoke.js --summary-export k6-report/summary.json
+          K6_EC=$?
+          set -e
+          echo "k6 exit code: $K6_EC (ignored for showcase)"
+
+          # Minimal HTML to display stats in GH Pages
+          cat > k6-report/index.html <<'HTML'
+          <!doctype html><meta charset="utf-8">
+          <title>k6 Results</title>
+          <h1>k6 Results</h1>
+          <p>This run is non-gating; thresholds may fail without failing CI.</p>
+          <pre id="out"></pre>
+          <script>
+          fetch('./summary.json').then(r=>r.json()).then(j=>{
+            const s = j.metrics;
+            function line(k){ return k + ': ' + JSON.stringify(s[k]); }
+            const keys = ['iterations','http_reqs','http_req_duration','http_req_failed'];
+            document.getElementById('out').textContent = keys.map(line).join('\n\n');
+          });
+          </script>
+          HTML
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-report
+          path: k6-report/**
+
+      - name: Publish to gh-pages (/k6/)
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: k6-report
+          destination_dir: k6
+          force_orphan: false
