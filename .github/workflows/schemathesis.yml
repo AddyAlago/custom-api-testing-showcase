@@ -72,15 +72,24 @@ jobs:
           echo "Count:"
           find allure-results -type f | wc -l
 
-      # --------------------------------------------------------------------
-      # Upload Allure artifact for portfolio aggregator
-      # --------------------------------------------------------------------
+      - name: Inspect Allure payload (pre-upload)
+        if: always()
+        run: |
+          echo "=== dirs ==="
+          find . -maxdepth 2 -type d -name 'allure-results*' -print
+          echo "=== counts ==="
+          for d in allure-results allure-results-*; do
+            [ -d "$d" ] || continue
+            echo "$d -> $(find "$d" -type f \( -name '*.json' -o -name '*.xml' -o -name '*.txt' \) | wc -l) files"
+          done
+
+      
       - name: Upload Allure results (artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: allure-api-schemathesis
-          path: allure-results
+          name: allure-api-schemathesis  
+          path: allure-results*                  
           if-no-files-found: warn
           retention-days: 14
 

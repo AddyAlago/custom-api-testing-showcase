@@ -239,14 +239,30 @@ jobs:
           done
           echo "Combined files:"
           ls -la allure-results-combined || true
+          
+# ⬅️ add this just before uploading
+      - name: Inspect Allure payload (pre-upload)
+        if: always()
+        run: |
+          echo "=== dirs ==="
+          find . -maxdepth 2 -type d -name 'allure-results*' -print
+          echo "=== counts ==="
+          for d in allure-results allure-results-*; do
+            [ -d "$d" ] || continue
+            echo "$d -> $(find "$d" -type f \( -name '*.json' -o -name '*.xml' -o -name '*.txt' \) | wc -l) files"
+          done
 
-      - name: Upload Allure results (API combined)
+      # ⬅️ make sure you upload the FOLDER(S), not just /** files
+      - name: Upload Allure results (artifact)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: allure-api-combined
-          path: allure-results-combined
+          name: allure-api-contract  
+          path: allure-results*                  # keep folder wrapper
           if-no-files-found: warn
           retention-days: 14
+
+
 
       - name: Stop local API
         if: always()

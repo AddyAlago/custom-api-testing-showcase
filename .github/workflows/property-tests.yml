@@ -67,15 +67,27 @@ jobs:
           ls -la allure-results-property || true
           echo "==== file count ===="
           find allure-results-property -type f | wc -l
+      - name: Inspect Allure payload (pre-upload)
+        if: always()
+        run: |
+          echo "=== dirs ==="
+          find . -maxdepth 2 -type d -name 'allure-results*' -print
+          echo "=== counts ==="
+          for d in allure-results allure-results-*; do
+            [ -d "$d" ] || continue
+            echo "$d -> $(find "$d" -type f \( -name '*.json' -o -name '*.xml' -o -name '*.txt' \) | wc -l) files"
+          done
 
-      - name: Upload Allure artifact
+      
+      - name: Upload Allure results (artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: allure-api-property
-          path: allure-results-property
+          name: allure-api-property  
+          path: allure-results*                  
           if-no-files-found: warn
           retention-days: 14
+           
 
       - name: Stop API
         if: always()
