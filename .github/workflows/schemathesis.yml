@@ -61,16 +61,40 @@ jobs:
       # ------------------------------------------------------------
       # Run Schemathesis CLI and collect Allure results
       # ------------------------------------------------------------
-      - name: Run Schemathesis (CLI → Allure)
-        env:
-          BASE_URL: ${{ env.BASE_URL }}
+      
+      - name: Show Schemathesis version (debug)
         run: |
-          rm -rf allure-results
-          schemathesis run "${BASE_URL}/openapi.json" \
-            --checks all \
-            --workers=auto \
-            --rate-limit=20/m \
-            --pytest-args="--alluredir=allure-results -q"
+          python - <<'PY'
+          import schemathesis, sys
+          print("Schemathesis version:", getattr(schemathesis, "__version__", "unknown"))
+          print("Schemathesis path   :", getattr(schemathesis, "__file__", "unknown"))
+          PY
+          pytest --version
+
+      - name: Generate dynamic Schemathesis pytest (no indent here-doc)
+        shell: bash
+        run: |
+          mkdir -p tests
+          if [ ! -f tests/test_schemathesis_dynamic.py ]; then
+          cat > tests/test_schemathesis_dynamic.py <<'PY'
+          import os
+          import schemathesis as st
+
+          BASE = os.getenv("BASE_URL", "http://localhost:8000")
+          schema = st.from_uri(f"{BASE}/openapi.json")
+
+          @schema.parametrize()
+          def test_api(case):
+              case.call_and_validate()
+          PY
+                    fi
+
+                - name: Run pytest (Schemathesis → Allure)
+                  env:
+                    BASE_URL: ${{ env.BASE_URL }}
+                  run: |
+                    rm -rf allure-results
+                    pytest -q --alluredir=allure-results
 
       # ------------------------------------------------------------
       # Inspect and upload Allure results
