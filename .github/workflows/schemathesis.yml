@@ -1,4 +1,4 @@
-name: QA • Schemathesis
+name: QA • Schemathesis (CLI → Allure)
 
 on:
   push: { branches: [ main ] }
@@ -17,20 +17,29 @@ jobs:
       BASE_URL: http://localhost:8000
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Start API (Compose in local-api)
+      # ------------------------------------------------------------
+      # Start the API (so the OpenAPI spec is available)
+      # ------------------------------------------------------------
+      - name: Start API (Docker Compose)
         working-directory: local-api
         run: |
           docker compose -f docker-compose.api.yml up -d --build
-          echo "Waiting for API..."
+          echo "Waiting for API to become healthy..."
           for i in {1..30}; do
             if curl -fsS "$BASE_URL/openapi.json" >/dev/null 2>&1; then
-              echo "API up"; break
+              echo "✅ API is up"
+              exit 0
             fi
             sleep 2
           done
+          echo "::error::API did not start in time" && exit 1
 
+      # ------------------------------------------------------------
+      # Set up Python and install dependencies
+      # ------------------------------------------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -38,32 +47,34 @@ jobs:
 
       - name: Install Schemathesis + Allure deps
         run: |
-          python -m pip install -U pip
-          python -m pip install schemathesis pytest allure-pytest requests
+          python -m pip install --upgrade pip
+          # install both your own reqs and the needed test tools
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install "schemathesis[pytest]>=3.24.0" pytest allure-pytest requests python-dotenv
+          python - <<'PY'
+          import schemathesis, sys
+          print("Schemathesis version:", getattr(schemathesis, "__version__", "unknown"))
+          print("Schemathesis path:", getattr(schemathesis, "__file__", "unknown"))
+          PY
 
-      # --------------------------------------------------------------------
-      # Run Schemathesis via pytest for Allure output
-      # --------------------------------------------------------------------
-      - name: Generate pytest Schemathesis test (if none exists)
-        run: |
-          mkdir -p tests
-          if [ ! -f tests/test_schemathesis_dynamic.py ]; then
-            cat > tests/test_schemathesis_dynamic.py <<'PY'
-            import schemathesis, os
-            BASE = os.getenv("BASE_URL", "http://localhost:8000")
-            schema = schemathesis.from_uri(f"{BASE}/openapi.json")
-
-            @schema.parametrize()
-            def test_api(case):
-                case.call_and_validate()
-            PY
-          fi
-
-      - name: Run Schemathesis (pytest → Allure)
+      # ------------------------------------------------------------
+      # Run Schemathesis CLI and collect Allure results
+      # ------------------------------------------------------------
+      - name: Run Schemathesis (CLI → Allure)
+        env:
+          BASE_URL: ${{ env.BASE_URL }}
         run: |
           rm -rf allure-results
-          pytest -q --alluredir=allure-results || true
+          schemathesis run "${BASE_URL}/openapi.json" \
+            --checks all \
+            --workers=auto \
+            --rate-limit=20/m \
+            --pytest-args="--alluredir=allure-results -q"
 
+      # ------------------------------------------------------------
+      # Inspect and upload Allure results
+      # ------------------------------------------------------------
       - name: Inspect Allure results
         if: always()
         run: |
@@ -72,30 +83,18 @@ jobs:
           echo "Count:"
           find allure-results -type f | wc -l
 
-      - name: Inspect Allure payload (pre-upload)
-        if: always()
-        run: |
-          echo "=== dirs ==="
-          find . -maxdepth 2 -type d -name 'allure-results*' -print
-          echo "=== counts ==="
-          for d in allure-results allure-results-*; do
-            [ -d "$d" ] || continue
-            echo "$d -> $(find "$d" -type f \( -name '*.json' -o -name '*.xml' -o -name '*.txt' \) | wc -l) files"
-          done
-
-      
       - name: Upload Allure results (artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: allure-api-schemathesis  
-          path: allure-results*                  
+          name: allure-api-schemathesis
+          path: allure-results*
           if-no-files-found: warn
           retention-days: 14
 
-      # --------------------------------------------------------------------
-      # Publish legacy HTML page (non-gating demo)
-      # --------------------------------------------------------------------
+      # ------------------------------------------------------------
+      # Generate lightweight HTML stub (for GH Pages demo)
+      # ------------------------------------------------------------
       - name: Create simple HTML report
         run: |
           mkdir -p schemathesis-report
@@ -103,9 +102,8 @@ jobs:
           <!doctype html><meta charset="utf-8">
           <title>Schemathesis Results</title>
           <h1>Schemathesis Results</h1>
-          <p>This run validates all endpoints in the OpenAPI schema using Schemathesis.</p>
-          <p>Allure results are uploaded for integration into the portfolio Combined report.</p>
-          <p>For full details, see the Combined Allure view on the portfolio.</p>
+          <p>This run validated all endpoints defined in the OpenAPI schema using Schemathesis CLI.</p>
+          <p>Full Allure results are uploaded as a workflow artifact and integrated into the combined QA report.</p>
           HTML
 
       - name: Upload HTML report
@@ -122,6 +120,9 @@ jobs:
           destination_dir: schemathesis
           force_orphan: false
 
+      # ------------------------------------------------------------
+      # Clean up containers
+      # ------------------------------------------------------------
       - name: Stop API
         if: always()
         working-directory: local-api
