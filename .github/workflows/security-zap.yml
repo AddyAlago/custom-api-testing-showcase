@@ -38,7 +38,7 @@ jobs:
 
       - name: Run ZAP Baseline scan
         env:
-          ZAP_TARGET: http://localhost:8000/docs   # start from a 200 page (FastAPI docs)
+          ZAP_TARGET: http://localhost:8000/docs
         run: |
           # Ensure the mounted directory is writable by the container
           rm -rf zap-report
@@ -46,7 +46,7 @@ jobs:
           chmod 777 zap-report
 
           docker run --rm --network=host \
-            -u 0:0 \  # run as root to avoid write-permission issues
+            -u 0:0 \
             -v "$PWD/zap-report:/zap/wrk" \
             ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
             -t "${ZAP_TARGET}" \
@@ -57,6 +57,7 @@ jobs:
 
           # Provide a stable landing page for GH Pages (/zap/)
           cp zap-report/zap-report.html zap-report/index.html || true
+
 
       - name: Upload ZAP artifact
         uses: actions/upload-artifact@v4
