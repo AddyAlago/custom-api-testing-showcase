@@ -26,7 +26,7 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f pyproject.toml ]; then pip install .; fi
-          python -m pip install schemathesis allure-pytest
+          python -m pip install schemathesis allure-pytest requests
 
       - name: Compose up & wait for API
         run: |
