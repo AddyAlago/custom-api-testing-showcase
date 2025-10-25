@@ -1,164 +1,66 @@
-name: QA • API tests (Pytest matrix → Allure)
+name: API Tests (Allure Artifact)
 
 on:
   push:
     branches: [ main ]
   pull_request:
-  workflow_dispatch:
 
 jobs:
-  # =========================
-  # 1) PYTEST MATRIX (your existing suites)
-  # =========================
-  run-matrix:
-    name: Run ${{ matrix.suite }}
+  api-tests:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - suite: contract
-            marker: contract
-          - suite: negative
-            marker: negative
-          - suite: idempotency
-            marker: idempotency
-          - suite: ratelimit
-            marker: ratelimit
-
+    env:
+      BASE_URL: http://localhost:8000
+      PYTHONUNBUFFERED: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
-      - name: Install test deps
-        shell: bash
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install your project requirements if present
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # Ensure core test tooling is present
-          pip install pytest requests jsonschema allure-pytest python-dotenv hypothesis
-          # Sanity check: dotenv importable (avoids conftest import crash)
-          python - <<'PY'
-          import pkgutil
-          assert pkgutil.find_loader("dotenv"), "python-dotenv not importable"
-          print("OK: python-dotenv available")
+          if [ -f pyproject.toml ]; then pip install .; fi
+          # Ensure Allure pytest plugin exists
+          python - << 'PY'
+          import sys, subprocess
+          try:
+              import allure_pytest  # noqa: F401
+          except Exception:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "allure-pytest"])
           PY
 
-      - name: Start local API (containerized)
-        working-directory: local-api
-        env:
-          RATE_LIMIT_PER_MIN: "10"   # keep ratelimit suite quick in CI
-        run: docker compose -f docker-compose.api.yml up -d --build
-
-      - name: Wait for API /health
-        env:
-          API_URL: http://localhost:8000/health
+      - name: Start services (docker compose if present)
         run: |
-          for i in {1..60}; do
-            if curl -fsS "$API_URL" >/dev/null 2>&1; then
-              echo "API healthy"; exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::API did not start in time" && exit 1
-
-      - name: Run pytest (${{ matrix.suite }})
-        env:
-          API_BASE_URL: http://localhost:8000
-          RATE_LIMIT_ENDPOINT: /ratelimit
-        run: |
-          set -e
-          mkdir -p allure-results
-
-          # Tag the report with CI metadata
-          printf '%s\n' \
-          '{' \
-          '  "name": "GitHub Actions",' \
-          '  "type": "github",' \
-          '  "reportName": "API • '"${{ matrix.suite }}"'",' \
-          '  "buildName": "API • '"${{ matrix.suite }}"' • #'"${{ github.run_number }}"'",' \
-          '  "buildUrl": "https://github.com/'"${{ github.repository }}"'/actions/runs/'"${{ github.run_id }}"'"' \
-          '}' > allure-results/executor.json
-
-          echo "== Collecting tests for marker: ${{ matrix.marker }} =="
-          set +e
-          COLLECT_OUT=$(pytest -m "${{ matrix.marker }}" --collect-only -q 2>&1)
-          COLLECT_RC=$?
-          set -e
-          echo "$COLLECT_OUT"
-
-          MATCH_COUNT=$(echo "$COLLECT_OUT" | sed -n 's/collected \([0-9]\+\) items.*/\1/p' | tail -n1)
-          MATCH_COUNT=${MATCH_COUNT:-0}
-          echo "Matched tests for marker '${{ matrix.marker }}': ${MATCH_COUNT}"
-
-          echo "== Running pytest with marker =="
-          set +e
-          pytest -m "${{ matrix.marker }}" --alluredir=allure-results -q
-          RUN_RC=$?
-          set -e
-          echo "pytest (with marker) exit code: $RUN_RC (ignored for artifact continuity)"
-
-          CASES=$(find allure-results -type f -name "*-result.json" | wc -l | xargs)
-          echo "Allure case files after marker run: ${CASES}"
-
-          if [ "$CASES" -eq 0 ]; then
-            echo "== Fallback: run all tests to ensure we have results =="
-            set +e
-            pytest --alluredir=allure-results -q
-            RUN2_RC=$?
-            set -e
-            echo "pytest (fallback all tests) exit code: $RUN2_RC (ignored)"
-            CASES=$(find allure-results -type f -name "*-result.json" | wc -l | xargs)
-            echo "Allure case files after fallback: ${CASES}"
+          if [ -f docker-compose.yml ] || [ -f compose.yaml ] || [ -f compose.yml ]; then
+            docker compose up -d
+            echo "Waiting for service to be ready..."
+            # Basic wait loop for http://localhost:8000
+            for i in $(seq 1 30); do
+              if curl -sSf http://localhost:8000/ > /dev/null; then
+                echo "Service ready."
+                break
+              fi
+              sleep 2
+            done
+          else
+            echo "No compose file; assuming BASE_URL is reachable."
           fi
 
-          if [ "$CASES" -eq 0 ]; then
-            echo "== No cases produced; writing a synthetic Allure heartbeat =="
-            python - <<'PY'
-            import json, os, time, uuid
-            os.makedirs("allure-results", exist_ok=True)
-            now = int(time.time()*1000)
-            doc = {
-              "uuid": str(uuid.uuid4()),
-              "name": "API pipeline heartbeat (no tests matched marker)",
-              "status": "skipped",
-              "stage": "finished",
-              "statusDetails": {"message": "No tests produced results for this suite; synthetic placeholder."},
-              "start": now,
-              "stop": now
-            }
-            open(f"allure-results/{uuid.uuid4()}.json","w").write(json.dumps(doc))
-            PY
-          fi
-
-      - name: Inspect Allure payload (API)
-        if: always()
+      - name: Run Pytest (API) → Allure
         run: |
-          echo "==== ls -la allure-results ===="
-          ls -la allure-results || true
-          echo "==== file count ===="
-          find allure-results -type f \( -name '*.json' -o -name '*.xml' -o -name '*.txt' \) | wc -l
-          echo "==== sample files ===="
-          find allure-results -maxdepth 1 -type f -printf '%P\n' | head -n 50 || true
+          mkdir -p allure-results/api
+          # Run all tests except property/ schemathesis helper if present
+          # You can tailor -k to your project; this keeps it generic.
+          pytest -q -k "not schemathesis and not property" --alluredir=allure-results/api
 
-      - name: Upload Allure results (artifact)
-        if: always()
+      - name: Upload Allure results (api)
         uses: actions/upload-artifact@v4
         with:
-          name: allure-api-${{ matrix.suite }}
-          path: allure-results
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Stop local API
-        if: always()
-        working-directory: local-api
-        run: docker compose -f docker-compose.api.yml down
+          name: allure-results-api
+          path: allure-results/api
+          if-no-files-found: error

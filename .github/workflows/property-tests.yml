@@ -1,95 +1,67 @@
-name: QA • Property Tests
+name: Property Tests (Allure Artifact)
 
 on:
-  push: { branches: [ main ] }
+  push:
+    branches: [ main ]
   pull_request:
-  workflow_dispatch:
 
 jobs:
   property-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-
+    env:
+      BASE_URL: http://localhost:8000
+      PYTHONUNBUFFERED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Start API (Compose in local-api)
-        working-directory: local-api
-        run: |
-          docker compose -f docker-compose.api.yml up -d --build
-          echo "Waiting for API..."
-          for i in {1..60}; do
-            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
-              echo "✅ API up"; exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::API did not start in time" && exit 1
-
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
-          python -m pip install -U pip
-          # your repo deps
+          python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # make sure these are present for property tests + allure
-          pip install pytest hypothesis allure-pytest
+          if [ -f pyproject.toml ]; then pip install .; fi
+          python - << 'PY'
+          import sys, subprocess
+          try:
+              import allure_pytest  # noqa: F401
+          except Exception:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "allure-pytest"])
+          PY
 
-      - name: Run property tests (non-gating, Allure-friendly)
+      - name: Start services (docker compose if present)
         run: |
-          rm -rf allure-results-property
-          mkdir -p allure-results-property
-          # Tag with CI metadata (helps in Combined Allure)
-          cat > allure-results-property/executor.json <<'JSON'
-          {
-            "name": "GitHub Actions",
-            "type": "github",
-            "reportName": "API • Property",
-            "buildName": "API • Property • #${{ github.run_number }}",
-            "buildUrl": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          }
-          JSON
+          if [ -f docker-compose.yml ] || [ -f compose.yaml ] || [ -f compose.yml ]; then
+            docker compose up -d
+            echo "Waiting for service to be ready..."
+            for i in $(seq 1 30); do
+              if curl -sSf http://localhost:8000/ > /dev/null; then
+                echo "Service ready."
+                break
+              fi
+              sleep 2
+            done
+          else
+            echo "No compose file; assuming BASE_URL is reachable."
+          fi
 
-          set +e
-          pytest -q tests/property --alluredir=allure-results-property
-          EC=$?
-          set -e
-          echo "pytest exit code: $EC (ignored for showcase)"
-
-      - name: Inspect Allure payload
-        if: always()
+      - name: Run Pytest (Property) → Allure
         run: |
-          echo "==== ls -la allure-results-property ===="
-          ls -la allure-results-property || true
-          echo "==== file count ===="
-          find allure-results-property -type f | wc -l
-      - name: Inspect Allure payload (pre-upload)
-        if: always()
-        run: |
-          echo "=== dirs ==="
-          find . -maxdepth 2 -type d -name 'allure-results*' -print
-          echo "=== counts ==="
-          for d in allure-results allure-results-*; do
-            [ -d "$d" ] || continue
-            echo "$d -> $(find "$d" -type f \( -name '*.json' -o -name '*.xml' -o -name '*.txt' \) | wc -l) files"
-          done
+          mkdir -p allure-results/property
+          if [ -d tests/property ]; then
+            pytest -q tests/property --alluredir=allure-results/property
+          else
+            # fallback if property tests are mixed; use marker if available
+            pytest -q -m property --alluredir=allure-results/property || true
+          fi
 
-      
-      - name: Upload Allure results (artifact)
-        if: always()
+      - name: Upload Allure results (property)
         uses: actions/upload-artifact@v4
         with:
-          name: allure-api-property  
-          path: allure-results*                  
-          if-no-files-found: warn
-          retention-days: 14
-           
-
-      - name: Stop API
-        if: always()
-        working-directory: local-api
-        run: docker compose -f docker-compose.api.yml down
+          name: allure-results-property
+          path: allure-results/property
+          if-no-files-found: error

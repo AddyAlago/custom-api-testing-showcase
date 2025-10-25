@@ -1,153 +1,73 @@
-name: QA • Schemathesis (CLI → Allure)
+name: Schemathesis (Allure Artifact)
 
 on:
-  push: { branches: [ main ] }
+  push:
+    branches: [ main ]
   pull_request:
-  workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   schemathesis:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-
     env:
       BASE_URL: http://localhost:8000
-
+      PYTHONUNBUFFERED: "1"
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------
-      # Start the API (so the OpenAPI spec is available)
-      # ------------------------------------------------------------
-      - name: Start API (Docker Compose)
-        working-directory: local-api
-        run: |
-          docker compose -f docker-compose.api.yml up -d --build
-          echo "Waiting for API to become healthy..."
-          for i in {1..30}; do
-            if curl -fsS "$BASE_URL/openapi.json" >/dev/null 2>&1; then
-              echo "✅ API is up"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::API did not start in time" && exit 1
-
-      # ------------------------------------------------------------
-      # Set up Python and install dependencies
-      # ------------------------------------------------------------
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install Schemathesis + Allure deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # install both your own reqs and the needed test tools
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pip install "schemathesis[pytest]>=3.24.0" pytest allure-pytest requests python-dotenv
-          python - <<'PY'
-          import schemathesis, sys
-          print("Schemathesis version:", getattr(schemathesis, "__version__", "unknown"))
-          print("Schemathesis path:", getattr(schemathesis, "__file__", "unknown"))
-          PY
+          if [ -f pyproject.toml ]; then pip install .; fi
+          pip install schemathesis allure-pytest
 
-      # ------------------------------------------------------------
-      # Run Schemathesis CLI and collect Allure results
-      # ------------------------------------------------------------
-      
-      - name: Show Schemathesis version (debug)
+      - name: Start services (docker compose if present)
         run: |
-          python - <<'PY'
-          import schemathesis, sys
-          print("Schemathesis version:", getattr(schemathesis, "__version__", "unknown"))
-          print("Schemathesis path   :", getattr(schemathesis, "__file__", "unknown"))
-          PY
-          pytest --version
+          if [ -f docker-compose.yml ] || [ -f compose.yaml ] || [ -f compose.yml ]; then
+            docker compose up -d
+            echo "Waiting for service to be ready..."
+            for i in $(seq 1 30); do
+              if curl -sSf "$BASE_URL/openapi.json" > /dev/null; then
+                echo "OpenAPI ready."
+                break
+              fi
+              sleep 2
+            done
+          fi
 
-      - name: Generate dynamic Schemathesis pytest (no indent here-doc)
-        shell: bash
+      - name: Generate minimal schemathesis test if none exists
         run: |
           mkdir -p tests
           if [ ! -f tests/test_schemathesis_dynamic.py ]; then
-          cat > tests/test_schemathesis_dynamic.py <<'PY'
-          import os
-          import schemathesis as st
+            cat > tests/test_schemathesis_dynamic.py <<'PY'
+            import os
+            import schemathesis as st
 
-          BASE = os.getenv("BASE_URL", "http://localhost:8000")
-          schema = st.from_uri(f"{BASE}/openapi.json")
+            BASE = os.getenv("BASE_URL", "http://localhost:8000")
+            schema = st.from_uri(f"{BASE}/openapi.json")
 
-          @schema.parametrize()
-          def test_api(case):
-              case.call_and_validate()
-          PY
-                    fi
+            @schema.parametrize()
+            def test_api(case):
+                case.call_and_validate()
+            PY
+          fi
 
-                - name: Run pytest (Schemathesis → Allure)
-                  env:
-                    BASE_URL: ${{ env.BASE_URL }}
-                  run: |
-                    rm -rf allure-results
-                    pytest -q --alluredir=allure-results
-
-      # ------------------------------------------------------------
-      # Inspect and upload Allure results
-      # ------------------------------------------------------------
-      - name: Inspect Allure results
-        if: always()
+      - name: Run Schemathesis → Allure
+        env:
+          BASE_URL: ${{ env.BASE_URL }}
         run: |
-          echo "==== Allure results ===="
-          ls -la allure-results || true
-          echo "Count:"
-          find allure-results -type f | wc -l
+          mkdir -p allure-results/schemathesis
+          pytest -q -k "schemathesis or test_schemathesis_dynamic" --alluredir=allure-results/schemathesis ||           pytest -q tests/test_schemathesis_dynamic.py --alluredir=allure-results/schemathesis
 
-      - name: Upload Allure results (artifact)
-        if: always()
+      - name: Upload Allure results (schemathesis)
         uses: actions/upload-artifact@v4
         with:
-          name: allure-api-schemathesis
-          path: allure-results*
-          if-no-files-found: warn
-          retention-days: 14
-
-      # ------------------------------------------------------------
-      # Generate lightweight HTML stub (for GH Pages demo)
-      # ------------------------------------------------------------
-      - name: Create simple HTML report
-        run: |
-          mkdir -p schemathesis-report
-          cat > schemathesis-report/index.html <<'HTML'
-          <!doctype html><meta charset="utf-8">
-          <title>Schemathesis Results</title>
-          <h1>Schemathesis Results</h1>
-          <p>This run validated all endpoints defined in the OpenAPI schema using Schemathesis CLI.</p>
-          <p>Full Allure results are uploaded as a workflow artifact and integrated into the combined QA report.</p>
-          HTML
-
-      - name: Upload HTML report
-        uses: actions/upload-artifact@v4
-        with:
-          name: schemathesis-report
-          path: schemathesis-report/**
-
-      - name: Publish to gh-pages (/schemathesis/)
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: schemathesis-report
-          destination_dir: schemathesis
-          force_orphan: false
-
-      # ------------------------------------------------------------
-      # Clean up containers
-      # ------------------------------------------------------------
-      - name: Stop API
-        if: always()
-        working-directory: local-api
-        run: docker compose -f docker-compose.api.yml down
+          name: allure-results-schemathesis
+          path: allure-results/schemathesis
+          if-no-files-found: error
