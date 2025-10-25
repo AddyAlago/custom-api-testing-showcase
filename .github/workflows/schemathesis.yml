@@ -35,7 +35,7 @@ jobs:
       - name: Install schemathesis
         run: |
           python -m pip install -U pip
-          python -m pip install 'schemathesis[hypothesis]==3.29.5'
+          python -m pip install 'schemathesis[hypothesis]'
 
       - name: Run Schemathesis (non-gating)
         env:

@@ -29,11 +29,16 @@ jobs:
 
 
       - name: Install k6
+        shell: bash
         run: |
-          curl -sSL https://github.com/grafana/k6/releases/latest/download/k6-v0.51.0-linux-amd64.tar.gz -o k6.tgz
+          set -euo pipefail
+          K6_VERSION="0.51.0"
+          curl -fL --retry 3 -o k6.tgz \
+            "https://github.com/grafana/k6/releases/download/v${K6_VERSION}/k6-v${K6_VERSION}-linux-amd64.tar.gz"
           tar -xzf k6.tgz
-          sudo mv k6-v0.51.0-linux-amd64/k6 /usr/local/bin/k6
+          sudo mv "k6-v${K6_VERSION}-linux-amd64/k6" /usr/local/bin/k6
           k6 version
+
 
       - name: Run k6 (non-gating) + export summary
         env:

@@ -1,4 +1,4 @@
-name: API tests
+name: QA • API tests
 
 on:
   push:
