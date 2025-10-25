@@ -1,4 +1,5 @@
 name: Schemathesis (Allure Artifact)
+
 on:
   push:
     branches: [ main ]
@@ -11,7 +12,6 @@ jobs:
       API_BASE_URL: http://localhost:8000
       BASE_URL: http://localhost:8000
       PYTHONUNBUFFERED: "1"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,38 +44,43 @@ jobs:
             exit 1
           }
 
-      - name: Generate minimal schemathesis test if none exists
+      - name: Write dynamic schemathesis test (no heredoc)
         run: |
-          mkdir -p tests
-          if [ ! -f tests/test_schemathesis_dynamic.py ]; then
-            cat > tests/test_schemathesis_dynamic.py <<'PY'
-          import os
-          import schemathesis as st
+          python - <<'PY'
+          import os, pathlib, textwrap
+          p = pathlib.Path("tests/test_schemathesis_dynamic.py")
+          p.parent.mkdir(parents=True, exist_ok=True)
+          if not p.exists():
+              p.write_text(textwrap.dedent("""
+              import os
+              import schemathesis as st
 
-          BASE = os.getenv("BASE_URL", "http://localhost:8000")
+              BASE = os.getenv("BASE_URL", "http://localhost:8000")
 
-          def _schema_from_uri(base):
-              if hasattr(st, 'from_uri'):
-                  return st.from_uri(f"{BASE}/openapi.json")
-              else:
-                  return st.openapi.from_uri(f"{BASE}/openapi.json")
+              def _schema_from_uri(base):
+                  if hasattr(st, 'from_uri'):
+                      return st.from_uri(f"{BASE}/openapi.json")
+                  else:
+                      return st.openapi.from_uri(f"{BASE}/openapi.json")
 
-          schema = _schema_from_uri(BASE)
+              schema = _schema_from_uri(BASE)
 
-          @schema.parametrize()
-          def test_api(case):
-              case.call_and_validate()
+              @schema.parametrize()
+              def test_api(case):
+                  case.call_and_validate()
+              """))
+          else:
+              print("Dynamic schemathesis test already exists; leaving as-is.")
           PY
-                    fi
 
-                - name: Run Schemathesis → Allure
-                  run: |
-                    mkdir -p allure-results/schemathesis
-                    pytest -q tests/test_schemathesis_dynamic.py --alluredir=allure-results/schemathesis
+      - name: Run Schemathesis → Allure
+        run: |
+          mkdir -p allure-results/schemathesis
+          pytest -q tests/test_schemathesis_dynamic.py --alluredir=allure-results/schemathesis
 
-                - name: Upload Allure results (schemathesis)
-                  uses: actions/upload-artifact@v4
-                  with:
-                    name: allure-results-schemathesis
-                    path: allure-results/schemathesis
-                    if-no-files-found: error
+      - name: Upload Allure results (schemathesis)
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-schemathesis
+          path: allure-results/schemathesis
+          if-no-files-found: error
