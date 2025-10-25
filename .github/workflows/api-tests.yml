@@ -44,14 +44,23 @@ jobs:
             exit 1
           }
 
-      - name: Run Pytest (API) → Allure
+      - name: Run Pytest (API) → Allure (allow failure but record)
+        continue-on-error: true
         run: |
           mkdir -p allure-results/api
           pytest -q --base-url="$API_BASE_URL" -k "not schemathesis and not property" --alluredir=allure-results/api
 
       - name: Upload Allure results (api)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: allure-results-api
           path: allure-results/api
           if-no-files-found: error
+
+      - name: Fail job if tests failed
+        if: failure()
+        run: |
+          echo "::error::API tests had failures. See Allure artifact."
+          exit 1
+

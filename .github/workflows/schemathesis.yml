@@ -87,14 +87,25 @@ jobs:
           PY
 
 
-      - name: Run Schemathesis → Allure
+      - name: Run Schemathesis → Allure (record status but don't fail yet)
         run: |
           mkdir -p allure-results/schemathesis
+          set +e
           pytest -q tests/test_schemathesis_dynamic.py --alluredir=allure-results/schemathesis
+          STATUS=$?
+          echo "PYTEST_STATUS=${STATUS}" >> "$GITHUB_ENV"
+          exit 0
 
       - name: Upload Allure results (schemathesis)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: allure-results-schemathesis
           path: allure-results/schemathesis
           if-no-files-found: error
+
+      - name: Fail job if tests failed
+        if: env.PYTEST_STATUS != '0'
+        run: |
+          echo "::error::schemathesis tests had failures. See Allure artifact."
+          exit 1

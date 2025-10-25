@@ -44,7 +44,8 @@ jobs:
             exit 1
           }
 
-      - name: Run Pytest (Property) → Allure
+      - name: Run Pytest (Property) → Allure (allow failure but record)
+        continue-on-error: true
         run: |
           mkdir -p allure-results/property
           if [ -d tests/property ]; then
@@ -54,8 +55,15 @@ jobs:
           fi
 
       - name: Upload Allure results (property)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: allure-results-property
           path: allure-results/property
           if-no-files-found: error
+
+      - name: Fail job if tests failed
+        if: failure()
+        run: |
+          echo "::error::Property tests had failures. See Allure artifact."
+          exit 1
