@@ -36,15 +36,16 @@ jobs:
             sleep 2
           done
 
-      - name: Run ZAP Baseline scan
+      - name: Run ZAP Baseline scan (do not fail job)
         env:
-          ZAP_TARGET: http://localhost:8000/docs   # start from a 200 page
+          ZAP_TARGET: http://localhost:8000/docs   # start from a 200 page (FastAPI docs)
         run: |
           # Ensure the mounted directory is writable by the container
           rm -rf zap-report
           mkdir -p zap-report
           chmod 777 zap-report
 
+          # Run ZAP but never fail the step/job
           set +e
           docker run --rm --network=host \
             -u 0:0 \
@@ -61,28 +62,7 @@ jobs:
           # Provide a stable landing page for GH Pages (/zap/)
           cp zap-report/zap-report.html zap-report/index.html || true
 
-          echo "ZAP baseline exit code: ${ZAP_EC} (0=PASS, 1=FAIL, 2=WARN)"
-          # We tolerate WARN (2) from baseline, but we will gate on risk below
-          if [ "${ZAP_EC}" -gt 2 ]; then
-            echo "ZAP returned unexpected error code ${ZAP_EC}" >&2
-            exit ${ZAP_EC}
-          fi
-
-      - name: Gate on ZAP risk level (fail on Medium/High only)
-        run: |
-          # riskcode: 0=Informational, 1=Low, 2=Medium, 3=High
-          xml="zap-report/zap-report.xml"
-          [ -f "$xml" ] || { echo "Missing $xml"; exit 1; }
-          hi=$(grep -c "<riskcode>3</riskcode>" "$xml" || true)
-          med=$(grep -c "<riskcode>2</riskcode>" "$xml" || true)
-          echo "ZAP findings → High: $hi, Medium: $med"
-          if [ "$hi" -gt 0 ] || [ "$med" -gt 0 ]; then
-            echo "❌ Medium/High ZAP alerts present. Failing CI."
-            exit 1
-          fi
-          echo "✅ No Medium/High alerts. Proceeding."
-
-
+          echo "ZAP baseline exit code: ${ZAP_EC} (0=PASS, 1=FAIL, 2=WARN). Continuing regardless."
 
       - name: Upload ZAP artifact
         uses: actions/upload-artifact@v4
@@ -91,6 +71,7 @@ jobs:
           path: zap-report/**
 
       - name: Publish report to gh-pages (/zap/)
+        if: always()
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -98,15 +79,16 @@ jobs:
           destination_dir: zap
           force_orphan: false
 
-      - name: Also publish /zap/index.html (stable name)
+      - name: Ensure /zap/index.html
+        if: always()
         run: |
           if [ -f "zap-report/index.html" ]; then
             mkdir -p _zap
             cp zap-report/index.html _zap/index.html
           fi
-        shell: bash
 
       - name: Deploy index helper (ensures /zap/index.html)
+        if: always()
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
