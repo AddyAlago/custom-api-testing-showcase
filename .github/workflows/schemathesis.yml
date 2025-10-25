@@ -44,34 +44,48 @@ jobs:
             exit 1
           }
 
-      - name: Write dynamic schemathesis test (no heredoc)
+      - name: Write dynamic schemathesis test (robust loader)
         run: |
           python - <<'PY'
           import os, pathlib, textwrap
           p = pathlib.Path("tests/test_schemathesis_dynamic.py")
           p.parent.mkdir(parents=True, exist_ok=True)
-          if not p.exists():
-              p.write_text(textwrap.dedent("""
-              import os
-              import schemathesis as st
+          p.write_text(textwrap.dedent("""
+          import os
+          import requests
+          import schemathesis as st
 
-              BASE = os.getenv("BASE_URL", "http://localhost:8000")
+          BASE = os.getenv("BASE_URL", "http://localhost:8000")
+          URL = f"{BASE}/openapi.json"
 
-              def _schema_from_uri(base):
-                  if hasattr(st, 'from_uri'):
-                      return st.from_uri(f"{BASE}/openapi.json")
-                  else:
-                      return st.openapi.from_uri(f"{BASE}/openapi.json")
+          def _schema_from_uri(url: str):
+              # Try legacy top-level API
+              if hasattr(st, "from_uri"):
+                  return st.from_uri(url)
+              # Try module-scoped APIs
+              openapi = getattr(st, "openapi", None)
+              if openapi is not None:
+                  if hasattr(openapi, "from_uri"):
+                      return openapi.from_uri(url)
+                  if hasattr(openapi, "from_url"):
+                      return openapi.from_url(url)
+                  if hasattr(openapi, "from_dict"):
+                      data = requests.get(url, timeout=30).json()
+                      return openapi.from_dict(data)
+              # Fallback to top-level from_dict if available
+              if hasattr(st, "from_dict"):
+                  data = requests.get(url, timeout=30).json()
+                  return st.from_dict(data)
+              raise RuntimeError("Unsupported Schemathesis version; no compatible loader found.")
 
-              schema = _schema_from_uri(BASE)
+          schema = _schema_from_uri(URL)
 
-              @schema.parametrize()
-              def test_api(case):
-                  case.call_and_validate()
-              """))
-          else:
-              print("Dynamic schemathesis test already exists; leaving as-is.")
+          @schema.parametrize()
+          def test_api(case):
+              case.call_and_validate()
+          """))
           PY
+
 
       - name: Run Schemathesis → Allure
         run: |
