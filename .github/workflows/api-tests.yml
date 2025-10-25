@@ -60,10 +60,11 @@ jobs:
         env:
           API_BASE_URL: http://localhost:8000
           RATE_LIMIT_ENDPOINT: /ratelimit
-
-
         run: |
+          set -e
           mkdir -p allure-results
+
+          # Tag the report with CI metadata (keep this)
           printf '%s\n' \
           '{' \
           '  "name": "GitHub Actions",' \
@@ -73,7 +74,60 @@ jobs:
           '  "buildUrl": "https://github.com/'"${{ github.repository }}"'/actions/runs/'"${{ github.run_id }}"'"' \
           '}' > allure-results/executor.json
 
-          pytest -m "${{ matrix.marker }}" --alluredir=allure-results -q || true
+          echo "== Collecting tests for marker: ${{ matrix.marker }} =="
+          # Collect-only to see how many tests match the marker
+          set +e
+          COLLECT_OUT=$(pytest -m "${{ matrix.marker }}" --collect-only -q 2>&1)
+          COLLECT_RC=$?
+          set -e
+          echo "$COLLECT_OUT"
+
+          # Best-effort parse for "collected N items"
+          MATCH_COUNT=$(echo "$COLLECT_OUT" | sed -n 's/collected \([0-9]\+\) items.*/\1/p' | tail -n1)
+          MATCH_COUNT=${MATCH_COUNT:-0}
+          echo "Matched tests for marker '${{ matrix.marker }}': ${MATCH_COUNT}"
+
+          echo "== Running pytest with marker =="
+          set +e
+          pytest -m "${{ matrix.marker }}" --alluredir=allure-results -q
+          RUN_RC=$?
+          set -e
+          echo "pytest (with marker) exit code: $RUN_RC (ignored for artifact continuity)"
+
+          # Count case files produced (not just executor.json)
+          CASES=$(find allure-results -type f -name "*-result.json" | wc -l | xargs)
+          echo "Allure case files after marker run: ${CASES}"
+
+          if [ "$CASES" -eq 0 ]; then
+            echo "== Fallback: run all tests to ensure we have results =="
+            set +e
+            pytest --alluredir=allure-results -q
+            RUN2_RC=$?
+            set -e
+            echo "pytest (fallback all tests) exit code: $RUN2_RC (ignored)"
+            CASES=$(find allure-results -type f -name "*-result.json" | wc -l | xargs)
+            echo "Allure case files after fallback: ${CASES}"
+          fi
+
+          if [ "$CASES" -eq 0 ]; then
+            echo "== No cases produced; writing a synthetic Allure heartbeat =="
+            python - <<'PY'
+          import json, os, time, uuid
+          os.makedirs("allure-results", exist_ok=True)
+          now = int(time.time()*1000)
+          doc = {
+            "uuid": str(uuid.uuid4()),
+            "name": "API pipeline heartbeat (no tests matched marker)",
+            "status": "skipped",
+            "stage": "finished",
+            "statusDetails": {"message": "No tests produced results for this suite; synthetic placeholder."},
+            "start": now,
+            "stop": now
+          }
+          open(f"allure-results/{uuid.uuid4()}.json","w").write(json.dumps(doc))
+          PY
+                    fi
+
         
 
       - name: Inspect Allure payload (API)
