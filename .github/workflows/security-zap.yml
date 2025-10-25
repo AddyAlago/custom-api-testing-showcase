@@ -38,13 +38,14 @@ jobs:
 
       - name: Run ZAP Baseline scan
         env:
-          ZAP_TARGET: http://localhost:8000/docs
+          ZAP_TARGET: http://localhost:8000/docs   # start from a 200 page
         run: |
           # Ensure the mounted directory is writable by the container
           rm -rf zap-report
           mkdir -p zap-report
           chmod 777 zap-report
 
+          set +e
           docker run --rm --network=host \
             -u 0:0 \
             -v "$PWD/zap-report:/zap/wrk" \
@@ -54,9 +55,33 @@ jobs:
             -x zap-report.xml \
             -m 5 \
             -a
+          ZAP_EC=$?
+          set -e
 
           # Provide a stable landing page for GH Pages (/zap/)
           cp zap-report/zap-report.html zap-report/index.html || true
+
+          echo "ZAP baseline exit code: ${ZAP_EC} (0=PASS, 1=FAIL, 2=WARN)"
+          # We tolerate WARN (2) from baseline, but we will gate on risk below
+          if [ "${ZAP_EC}" -gt 2 ]; then
+            echo "ZAP returned unexpected error code ${ZAP_EC}" >&2
+            exit ${ZAP_EC}
+          fi
+
+      - name: Gate on ZAP risk level (fail on Medium/High only)
+        run: |
+          # riskcode: 0=Informational, 1=Low, 2=Medium, 3=High
+          xml="zap-report/zap-report.xml"
+          [ -f "$xml" ] || { echo "Missing $xml"; exit 1; }
+          hi=$(grep -c "<riskcode>3</riskcode>" "$xml" || true)
+          med=$(grep -c "<riskcode>2</riskcode>" "$xml" || true)
+          echo "ZAP findings → High: $hi, Medium: $med"
+          if [ "$hi" -gt 0 ] || [ "$med" -gt 0 ]; then
+            echo "❌ Medium/High ZAP alerts present. Failing CI."
+            exit 1
+          fi
+          echo "✅ No Medium/High alerts. Proceeding."
+
 
 
       - name: Upload ZAP artifact
