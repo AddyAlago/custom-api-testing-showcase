@@ -34,10 +34,7 @@ jobs:
             docker compose up -d
             echo "Waiting for OpenAPI at $BASE_URL/openapi.json ..."
             for i in $(seq 1 30); do
-              if curl -sSf "$BASE_URL/openapi.json" > /dev/null; then
-                echo "OpenAPI ready."
-                break
-              fi
+              curl -sSf "$BASE_URL/openapi.json" > /dev/null && echo "OpenAPI ready." && break
               sleep 2
             done
           fi
@@ -46,25 +43,24 @@ jobs:
         run: |
           mkdir -p tests
           if [ ! -f tests/test_schemathesis_dynamic.py ]; then
-            cat > tests/test_schemathesis_dynamic.py <<'PY'
-import os
-import schemathesis as st
-
-BASE = os.getenv("BASE_URL", "http://localhost:8000")
-schema = st.from_uri(f"{BASE}/openapi.json")
-
-@schema.parametrize()
-def test_api(case):
-    case.call_and_validate()
-PY
+            printf '%s\n' \
+              'import os' \
+              'import schemathesis as st' \
+              '' \
+              'BASE = os.getenv("BASE_URL", "http://localhost:8000")' \
+              'schema = st.from_uri(f"{BASE}/openapi.json")' \
+              '' \
+              '@schema.parametrize()' \
+              'def test_api(case):' \
+              '    case.call_and_validate()' \
+              > tests/test_schemathesis_dynamic.py
           fi
 
       - name: Run Schemathesis → Allure
-        env:
-          BASE_URL: ${{ env.BASE_URL }}
         run: |
           mkdir -p allure-results/schemathesis
-          pytest -q -k "schemathesis or test_schemathesis_dynamic" --alluredir=allure-results/schemathesis ||           pytest -q tests/test_schemathesis_dynamic.py --alluredir=allure-results/schemathesis
+          pytest -q -k "schemathesis or test_schemathesis_dynamic" --alluredir=allure-results/schemathesis || \
+          pytest -q tests/test_schemathesis_dynamic.py --alluredir=allure-results/schemathesis
 
       - name: Upload Allure results (schemathesis)
         uses: actions/upload-artifact@v4
