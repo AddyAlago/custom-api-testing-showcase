@@ -60,20 +60,21 @@ jobs:
         env:
           API_BASE_URL: http://localhost:8000
           RATE_LIMIT_ENDPOINT: /ratelimit
+
+
         run: |
           mkdir -p allure-results
-          # tag the report with CI metadata
-          cat > allure-results/executor.json <<'JSON'
-          {
-            "name": "GitHub Actions",
-            "type": "github",
-            "reportName": "API • ${{ matrix.suite }}",
-            "buildName": "API • ${{ matrix.suite }} • #${{ github.run_number }}",
-            "buildUrl": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          }
-          JSON
-          # run only this suite's marker; don't hard-fail to ensure artifact upload
+          printf '%s\n' \
+          '{' \
+          '  "name": "GitHub Actions",' \
+          '  "type": "github",' \
+          '  "reportName": "API • '"${{ matrix.suite }}"'",' \
+          '  "buildName": "API • '"${{ matrix.suite }}"' • #'"${{ github.run_number }}"'",' \
+          '  "buildUrl": "https://github.com/'"${{ github.repository }}"'/actions/runs/'"${{ github.run_id }}"'"' \
+          '}' > allure-results/executor.json
+
           pytest -m "${{ matrix.marker }}" --alluredir=allure-results -q || true
+        
 
       - name: Inspect Allure payload (API)
         if: always()
@@ -142,20 +143,24 @@ jobs:
           pip install pytest allure-pytest schemathesis requests
 
       # Create a tiny pytest file that runs Schemathesis against /openapi.json
+      
       - name: Create dynamic Schemathesis test (if not present)
         run: |
           mkdir -p tests
           if [ ! -f tests/test_schemathesis_dynamic.py ]; then
-            cat > tests/test_schemathesis_dynamic.py <<'PY'
-            import schemathesis, os
-            BASE = os.getenv("BASE_URL", "http://localhost:8000")
-            schema = schemathesis.from_uri(f"{BASE}/openapi.json")
+            printf "%s\n" \
+          "import os" \
+          "import schemathesis" \
+          "" \
+          "BASE = os.getenv('BASE_URL', 'http://localhost:8000')" \
+          "schema = schemathesis.from_uri(f'{BASE}/openapi.json')" \
+          "" \
+          "@schema.parametrize()" \
+          "def test_api(case):" \
+          "    case.call_and_validate()" \
+                      > tests/test_schemathesis_dynamic.py
+                  fi
 
-            @schema.parametrize()
-            def test_api(case):
-                case.call_and_validate()
-            PY
-          fi
 
       - name: Run Schemathesis (pytest → Allure)
         run: |
@@ -205,27 +210,17 @@ jobs:
       # Convert k6 JSON summary → minimal Allure results
       - name: Convert k6 summary to Allure
         run: |
-          python - <<'PY'
-          import json, os, time, uuid
-          os.makedirs("allure-results-k6", exist_ok=True)
-          now = int(time.time()*1000)
-          data = json.load(open("k6-report/summary.json"))
-          http_reqs = data.get("metrics", {}).get("http_reqs", {}).get("count", 0)
-          p95 = data.get("metrics", {}).get("http_req_duration", {}).get("percentiles", {}).get("p(95)")
+          python -c "import json, os, time, uuid; \
+          os.makedirs('allure-results-k6', exist_ok=True); \
+          now=int(time.time()*1000); \
+          data=json.load(open('k6-report/summary.json')); \
+          http_reqs=data.get('metrics',{}).get('http_reqs',{}).get('count',0); \
+          p95=data.get('metrics',{}).get('http_req_duration',{}).get('percentiles',{}).get('p(95)'); \
+          def write(name,status): \
+              open(f'allure-results-k6/{uuid.uuid4()}.json','w').write(json.dumps({'uuid':str(uuid.uuid4()),'name':name,'status':status,'stage':'finished','start':now,'stop':now})); \
+          write('k6 smoke: ran requests','passed' if http_reqs>0 else 'failed'); \
+          write(f'k6 http_req_duration p95 = {p95} ms','passed' if p95 is not None else 'broken')"
 
-          def write(name, status):
-            with open(f"allure-results-k6/{uuid.uuid4()}.json","w") as f:
-              f.write(json.dumps({
-                "uuid": str(uuid.uuid4()),
-                "name": name,
-                "status": status,
-                "stage": "finished",
-                "start": now, "stop": now
-              }))
-
-          write("k6 smoke: ran requests", "passed" if http_reqs > 0 else "failed")
-          write(f"k6 http_req_duration p95 = {p95} ms", "passed" if p95 is not None else "broken")
-          PY
 
       # Merge Schemathesis + k6 → one Allure artifact for your portfolio
       - name: Merge Allure results (schemathesis + k6)
@@ -240,7 +235,7 @@ jobs:
           echo "Combined files:"
           ls -la allure-results-combined || true
           
-# ⬅️ add this just before uploading
+
       - name: Inspect Allure payload (pre-upload)
         if: always()
         run: |
@@ -252,13 +247,13 @@ jobs:
             echo "$d -> $(find "$d" -type f \( -name '*.json' -o -name '*.xml' -o -name '*.txt' \) | wc -l) files"
           done
 
-      # ⬅️ make sure you upload the FOLDER(S), not just /** files
+      
       - name: Upload Allure results (artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: allure-api-contract  
-          path: allure-results*                  # keep folder wrapper
+          path: allure-results*                  
           if-no-files-found: warn
           retention-days: 14
 
