@@ -24,17 +24,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Start mock API (Docker Compose)
+      - name: Start API (Compose in local-api)
+        working-directory: local-api
         run: |
-          docker compose up -d
-          echo "Waiting for mock API..."
+          docker compose -f docker-compose.api.yml up -d --build
+          echo "Waiting for API..."
           for i in {1..30}; do
-            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
-              echo "Mock API is up."
-              break
-            fi
+            if curl -fsS http://localhost:8000/openapi.json >/dev/null 2>&1; then
+              echo "API up"; break; fi
             sleep 2
           done
+
 
       - name: Run ZAP Baseline scan (do not fail job)
         env:

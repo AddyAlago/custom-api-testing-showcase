@@ -16,15 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start mock API
+      - name: Start API (Compose in local-api)
+        working-directory: local-api
         run: |
-          docker compose up -d
+          docker compose -f docker-compose.api.yml up -d --build
+          echo "Waiting for API..."
           for i in {1..30}; do
-            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
-              break
-            fi
+            if curl -fsS http://localhost:8000/openapi.json >/dev/null 2>&1; then
+              echo "API up"; break; fi
             sleep 2
           done
+
 
       - name: Install k6
         run: |

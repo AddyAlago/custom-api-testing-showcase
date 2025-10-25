@@ -6,3 +6,5 @@ allure-pytest==2.13.5
 python-dotenv 
 schemathesis[hypothesis]
 hypothesis
+pydantic
+fastapi
