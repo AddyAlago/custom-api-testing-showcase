@@ -140,7 +140,7 @@ jobs:
       - name: Install deps (pytest + Schemathesis + Allure)
         run: |
           python -m pip install --upgrade pip
-          pip install pytest allure-pytest schemathesis requests
+          pip install pytest allure-pytest schemathesis requests python-dotenv
 
       # Create a tiny pytest file that runs Schemathesis against /openapi.json
       
