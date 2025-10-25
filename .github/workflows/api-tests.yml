@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BASE_URL: http://localhost:8000
+      API_BASE_URL: http://localhost:8000
       PYTHONUNBUFFERED: "1"
     steps:
       - name: Checkout
@@ -25,7 +26,6 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f pyproject.toml ]; then pip install .; fi
-          # Ensure Allure pytest plugin exists
           python - << 'PY'
           import sys, subprocess
           try:
@@ -39,9 +39,8 @@ jobs:
           if [ -f docker-compose.yml ] || [ -f compose.yaml ] || [ -f compose.yml ]; then
             docker compose up -d
             echo "Waiting for service to be ready..."
-            # Basic wait loop for http://localhost:8000
             for i in $(seq 1 30); do
-              if curl -sSf http://localhost:8000/ > /dev/null; then
+              if curl -sSf "$BASE_URL/health" > /dev/null; then
                 echo "Service ready."
                 break
               fi
@@ -52,11 +51,12 @@ jobs:
           fi
 
       - name: Run Pytest (API) → Allure
+        env:
+          BASE_URL: ${{ env.BASE_URL }}
+          API_BASE_URL: ${{ env.API_BASE_URL }}
         run: |
           mkdir -p allure-results/api
-          # Run all tests except property/ schemathesis helper if present
-          # You can tailor -k to your project; this keeps it generic.
-          pytest -q -k "not schemathesis and not property" --alluredir=allure-results/api
+          pytest -q --base-url="$API_BASE_URL" -k "not schemathesis and not property" --alluredir=allure-results/api
 
       - name: Upload Allure results (api)
         uses: actions/upload-artifact@v4

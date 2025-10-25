@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BASE_URL: http://localhost:8000
+      API_BASE_URL: http://localhost:8000
       PYTHONUNBUFFERED: "1"
     steps:
       - name: Checkout
@@ -39,24 +40,24 @@ jobs:
             docker compose up -d
             echo "Waiting for service to be ready..."
             for i in $(seq 1 30); do
-              if curl -sSf http://localhost:8000/ > /dev/null; then
+              if curl -sSf "$BASE_URL/health" > /dev/null; then
                 echo "Service ready."
                 break
               fi
               sleep 2
             done
-          else
-            echo "No compose file; assuming BASE_URL is reachable."
           fi
 
       - name: Run Pytest (Property) → Allure
+        env:
+          BASE_URL: ${{ env.BASE_URL }}
+          API_BASE_URL: ${{ env.API_BASE_URL }}
         run: |
           mkdir -p allure-results/property
           if [ -d tests/property ]; then
-            pytest -q tests/property --alluredir=allure-results/property
+            pytest -q tests/property --base-url="$API_BASE_URL" --alluredir=allure-results/property
           else
-            # fallback if property tests are mixed; use marker if available
-            pytest -q -m property --alluredir=allure-results/property || true
+            pytest -q -m property --base-url="$API_BASE_URL" --alluredir=allure-results/property || true
           fi
 
       - name: Upload Allure results (property)

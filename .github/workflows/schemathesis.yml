@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BASE_URL: http://localhost:8000
+      API_BASE_URL: http://localhost:8000
       PYTHONUNBUFFERED: "1"
     steps:
       - name: Checkout
@@ -31,7 +32,7 @@ jobs:
         run: |
           if [ -f docker-compose.yml ] || [ -f compose.yaml ] || [ -f compose.yml ]; then
             docker compose up -d
-            echo "Waiting for service to be ready..."
+            echo "Waiting for OpenAPI at $BASE_URL/openapi.json ..."
             for i in $(seq 1 30); do
               if curl -sSf "$BASE_URL/openapi.json" > /dev/null; then
                 echo "OpenAPI ready."
@@ -46,16 +47,16 @@ jobs:
           mkdir -p tests
           if [ ! -f tests/test_schemathesis_dynamic.py ]; then
             cat > tests/test_schemathesis_dynamic.py <<'PY'
-            import os
-            import schemathesis as st
+import os
+import schemathesis as st
 
-            BASE = os.getenv("BASE_URL", "http://localhost:8000")
-            schema = st.from_uri(f"{BASE}/openapi.json")
+BASE = os.getenv("BASE_URL", "http://localhost:8000")
+schema = st.from_uri(f"{BASE}/openapi.json")
 
-            @schema.parametrize()
-            def test_api(case):
-                case.call_and_validate()
-            PY
+@schema.parametrize()
+def test_api(case):
+    case.call_and_validate()
+PY
           fi
 
       - name: Run Schemathesis → Allure
