@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8">
+<title>k6 Results</title>
+<h1>k6 Results</h1>
+<p>This run is non-gating; thresholds may fail without failing CI.</p>
+<pre id="out"></pre>
+<script>
+fetch('./summary.json').then(r=>r.json()).then(j=>{
+  const s = j.metrics;
+  function line(k){ return k + ': ' + JSON.stringify(s[k]); }
+  const keys = ['iterations','http_reqs','http_req_duration','http_req_failed'];
+  document.getElementById('out').textContent = keys.map(line).join('\n\n');
+});
+</script>
