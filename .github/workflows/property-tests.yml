@@ -18,35 +18,66 @@ jobs:
         run: |
           docker compose -f docker-compose.api.yml up -d --build
           echo "Waiting for API..."
-          for i in {1..30}; do
-            if curl -fsS http://localhost:8000/openapi.json >/dev/null 2>&1; then
-              echo "API up"; break; fi
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              echo "✅ API up"; exit 0
+            fi
             sleep 2
           done
-
+          echo "::error::API did not start in time" && exit 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with:
+          python-version: "3.11"
 
       - name: Install deps
         run: |
           python -m pip install -U pip
-          python -m pip install -r requirements.txt
-          # If your tests are a separate extra, ensure hypothesis is present:
-          python -m pip install hypothesis
+          # your repo deps
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # make sure these are present for property tests + allure
+          pip install pytest hypothesis allure-pytest
 
       - name: Run property tests (non-gating, Allure-friendly)
         run: |
+          rm -rf allure-results-property
           mkdir -p allure-results-property
+          # Tag with CI metadata (helps in Combined Allure)
+          cat > allure-results-property/executor.json <<'JSON'
+          {
+            "name": "GitHub Actions",
+            "type": "github",
+            "reportName": "API • Property",
+            "buildName": "API • Property • #${{ github.run_number }}",
+            "buildUrl": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+
           set +e
           pytest -q tests/property --alluredir=allure-results-property
           EC=$?
           set -e
           echo "pytest exit code: $EC (ignored for showcase)"
 
+      - name: Inspect Allure payload
+        if: always()
+        run: |
+          echo "==== ls -la allure-results-property ===="
+          ls -la allure-results-property || true
+          echo "==== file count ===="
+          find allure-results-property -type f | wc -l
+
       - name: Upload Allure artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: allure-api-property
-          path: allure-results-property/**
+          path: allure-results-property
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Stop API
+        if: always()
+        working-directory: local-api
+        run: docker compose -f docker-compose.api.yml down

@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
+    env:
+      BASE_URL: http://localhost:8000
+
     steps:
       - uses: actions/checkout@v4
 
@@ -22,47 +25,81 @@ jobs:
           docker compose -f docker-compose.api.yml up -d --build
           echo "Waiting for API..."
           for i in {1..30}; do
-            if curl -fsS http://localhost:8000/openapi.json >/dev/null 2>&1; then
-              echo "API up"; break; fi
+            if curl -fsS "$BASE_URL/openapi.json" >/dev/null 2>&1; then
+              echo "API up"; break
+            fi
             sleep 2
           done
 
-
       - name: Set up Python
         uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with:
+          python-version: "3.11"
 
-      - name: Install schemathesis
+      - name: Install Schemathesis + Allure deps
         run: |
           python -m pip install -U pip
-          python -m pip install 'schemathesis[hypothesis]'
+          python -m pip install schemathesis pytest allure-pytest requests
 
-      - name: Run Schemathesis (non-gating)
-        env:
-          BASE_URL: http://localhost:8000
+      # --------------------------------------------------------------------
+      # Run Schemathesis via pytest for Allure output
+      # --------------------------------------------------------------------
+      - name: Generate pytest Schemathesis test (if none exists)
+        run: |
+          mkdir -p tests
+          if [ ! -f tests/test_schemathesis_dynamic.py ]; then
+            cat > tests/test_schemathesis_dynamic.py <<'PY'
+            import schemathesis, os
+            BASE = os.getenv("BASE_URL", "http://localhost:8000")
+            schema = schemathesis.from_uri(f"{BASE}/openapi.json")
+
+            @schema.parametrize()
+            def test_api(case):
+                case.call_and_validate()
+            PY
+          fi
+
+      - name: Run Schemathesis (pytest → Allure)
+        run: |
+          rm -rf allure-results
+          pytest -q --alluredir=allure-results || true
+
+      - name: Inspect Allure results
+        if: always()
+        run: |
+          echo "==== Allure results ===="
+          ls -la allure-results || true
+          echo "Count:"
+          find allure-results -type f | wc -l
+
+      # --------------------------------------------------------------------
+      # Upload Allure artifact for portfolio aggregator
+      # --------------------------------------------------------------------
+      - name: Upload Allure results (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-api-schemathesis
+          path: allure-results
+          if-no-files-found: warn
+          retention-days: 14
+
+      # --------------------------------------------------------------------
+      # Publish legacy HTML page (non-gating demo)
+      # --------------------------------------------------------------------
+      - name: Create simple HTML report
         run: |
           mkdir -p schemathesis-report
-          set +e
-          schemathesis run "$BASE_URL/openapi.json" \
-            --checks=all \
-            --base-url "$BASE_URL" \
-            --hypothesis-deadline=none \
-            --show-errors-tracebacks \
-            --junit-xml schemathesis-report/junit.xml
-          SCH_EC=$?
-          set -e
-          echo "Schemathesis exit code: $SCH_EC (ignored for demo showcase)"
-
-          # Tiny HTML index so we can publish a simple page
           cat > schemathesis-report/index.html <<'HTML'
           <!doctype html><meta charset="utf-8">
           <title>Schemathesis Results</title>
           <h1>Schemathesis Results</h1>
-          <p>JUnit XML: <a href="./junit.xml">junit.xml</a></p>
-          <p>This job is non-gating for the showcase.</p>
+          <p>This run validates all endpoints in the OpenAPI schema using Schemathesis.</p>
+          <p>Allure results are uploaded for integration into the portfolio Combined report.</p>
+          <p>For full details, see the Combined Allure view on the portfolio.</p>
           HTML
 
-      - name: Upload artifact
+      - name: Upload HTML report
         uses: actions/upload-artifact@v4
         with:
           name: schemathesis-report
@@ -75,3 +112,8 @@ jobs:
           publish_dir: schemathesis-report
           destination_dir: schemathesis
           force_orphan: false
+
+      - name: Stop API
+        if: always()
+        working-directory: local-api
+        run: docker compose -f docker-compose.api.yml down

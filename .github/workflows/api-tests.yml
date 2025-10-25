@@ -1,4 +1,4 @@
-name: QA • API tests
+name: QA • API tests (Pytest matrix + Schemathesis + k6 → Allure)
 
 on:
   push:
@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
 
 jobs:
+  # =========================
+  # 1) PYTEST MATRIX (your existing suites)
+  # =========================
   run-matrix:
     name: Run ${{ matrix.suite }}
     runs-on: ubuntu-latest
@@ -37,19 +40,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest requests jsonschema allure-pytest python-dotenv
 
-      - name: Start local API
+      - name: Start local API (containerized)
         working-directory: local-api
         env:
-          RATE_LIMIT_PER_MIN: "10"   # keeps ratelimit suite quick in CI
+          RATE_LIMIT_PER_MIN: "10"   # keep ratelimit suite quick in CI
         run: docker compose -f docker-compose.api.yml up -d --build
 
       - name: Wait for API /health
         run: |
           for i in {1..60}; do
-            curl -fsS http://localhost:8000/health && exit 0
-            sleep 1
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              echo "API healthy"; exit 0
+            fi
+            sleep 2
           done
-          echo "API did not start in time" && exit 1
+          echo "::error::API did not start in time" && exit 1
 
       - name: Run pytest (${{ matrix.suite }})
         env:
@@ -57,17 +62,17 @@ jobs:
           RATE_LIMIT_ENDPOINT: /ratelimit
         run: |
           mkdir -p allure-results
-          # Tag report with CI metadata (helps later debugging)
+          # tag the report with CI metadata
           cat > allure-results/executor.json <<'JSON'
           {
             "name": "GitHub Actions",
             "type": "github",
+            "reportName": "API • ${{ matrix.suite }}",
             "buildName": "API • ${{ matrix.suite }} • #${{ github.run_number }}",
-            "buildUrl": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-            "reportName": "API • ${{ matrix.suite }}"
+            "buildUrl": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
           JSON
-          # Run only this suite's marker; don't fail hard so artifact still uploads
+          # run only this suite's marker; don't hard-fail to ensure artifact upload
           pytest -m "${{ matrix.marker }}" --alluredir=allure-results -q || true
 
       - name: Inspect Allure payload (API)
@@ -75,7 +80,7 @@ jobs:
         run: |
           echo "==== ls -la allure-results ===="
           ls -la allure-results || true
-          echo "==== count of files ===="
+          echo "==== file count ===="
           find allure-results -type f \( -name '*.json' -o -name '*.xml' -o -name '*.txt' \) | wc -l
           echo "==== sample files ===="
           find allure-results -maxdepth 1 -type f -printf '%P\n' | head -n 50 || true
@@ -89,6 +94,159 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Stop local API
+        if: always()
+        working-directory: local-api
+        run: docker compose -f docker-compose.api.yml down
+
+
+  # =========================
+  # 2) SCHEMATHESIS + K6 (converted to Allure + uploaded as one artifact)
+  # =========================
+  schema-and-k6:
+    name: Schemathesis + k6 (Allure combined)
+    runs-on: ubuntu-latest
+    needs: [ run-matrix ]   # optional; ensures API image built by compose if it matters
+    timeout-minutes: 40
+    env:
+      BASE_URL: http://localhost:8000
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Start the same containerized API
+      - name: Start local API (containerized)
+        working-directory: local-api
+        run: docker compose -f docker-compose.api.yml up -d --build
+
+      - name: Wait for API /health
+        run: |
+          for i in {1..60}; do
+            if curl -fsS "${BASE_URL}/health" >/dev/null 2>&1; then
+              echo "API healthy"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::API did not start in time" && exit 1
+
+      # Python toolchain for pytest + schemathesis (Allure)
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps (pytest + Schemathesis + Allure)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest allure-pytest schemathesis requests
+
+      # Create a tiny pytest file that runs Schemathesis against /openapi.json
+      - name: Create dynamic Schemathesis test (if not present)
+        run: |
+          mkdir -p tests
+          if [ ! -f tests/test_schemathesis_dynamic.py ]; then
+            cat > tests/test_schemathesis_dynamic.py <<'PY'
+            import schemathesis, os
+            BASE = os.getenv("BASE_URL", "http://localhost:8000")
+            schema = schemathesis.from_uri(f"{BASE}/openapi.json")
+
+            @schema.parametrize()
+            def test_api(case):
+                case.call_and_validate()
+            PY
+          fi
+
+      - name: Run Schemathesis (pytest → Allure)
+        run: |
+          rm -rf allure-results-schemathesis
+          pytest -q --alluredir=allure-results-schemathesis
+
+      # Install k6 using official apt repo (reliable on GH runners)
+      - name: Install k6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates gnupg
+          curl -fsSL https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update && sudo apt-get install -y k6
+          k6 version
+
+      # Use your existing script if present; otherwise generate a basic smoke
+      - name: Ensure k6 smoke script
+        run: |
+          mkdir -p performance/k6
+          if [ ! -f performance/k6/smoke.js ]; then
+            cat > performance/k6/smoke.js <<'JS'
+            import http from 'k6/http';
+            import { check, sleep } from 'k6';
+            export const options = { vus: 1, duration: '15s' };
+            const BASE = __ENV.BASE_URL || 'http://localhost:8000';
+            export default function () {
+              const res = http.get(`${BASE}/health`);
+              check(res, { 'status is 200': (r) => r.status === 200 });
+              sleep(1);
+            }
+            JS
+          fi
+
+      - name: Run k6 smoke (export JSON summary)
+        env:
+          BASE_URL: ${{ env.BASE_URL }}
+          K6_SUMMARY_TREND_STATS: "avg,p(90),p(95),p(99),min,max"
+        run: |
+          mkdir -p k6-report
+          set +e
+          k6 run performance/k6/smoke.js --summary-export k6-report/summary.json
+          echo "k6 exit code: $? (non-gating)"
+          set -e
+
+      # Convert k6 JSON summary → minimal Allure results
+      - name: Convert k6 summary to Allure
+        run: |
+          python - <<'PY'
+          import json, os, time, uuid
+          os.makedirs("allure-results-k6", exist_ok=True)
+          now = int(time.time()*1000)
+          data = json.load(open("k6-report/summary.json"))
+          http_reqs = data.get("metrics", {}).get("http_reqs", {}).get("count", 0)
+          p95 = data.get("metrics", {}).get("http_req_duration", {}).get("percentiles", {}).get("p(95)")
+
+          def write(name, status):
+            with open(f"allure-results-k6/{uuid.uuid4()}.json","w") as f:
+              f.write(json.dumps({
+                "uuid": str(uuid.uuid4()),
+                "name": name,
+                "status": status,
+                "stage": "finished",
+                "start": now, "stop": now
+              }))
+
+          write("k6 smoke: ran requests", "passed" if http_reqs > 0 else "failed")
+          write(f"k6 http_req_duration p95 = {p95} ms", "passed" if p95 is not None else "broken")
+          PY
+
+      # Merge Schemathesis + k6 → one Allure artifact for your portfolio
+      - name: Merge Allure results (schemathesis + k6)
+        run: |
+          rm -rf allure-results-combined
+          mkdir -p allure-results-combined
+          for d in allure-results-schemathesis allure-results-k6; do
+            if [ -d "$d" ]; then
+              cp -r "$d"/* allure-results-combined/ || true
+            fi
+          done
+          echo "Combined files:"
+          ls -la allure-results-combined || true
+
+      - name: Upload Allure results (API combined)
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-api-combined
+          path: allure-results-combined
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Stop local API
         if: always()
